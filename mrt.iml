@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<module type="JAVA_MODULE" version="4">
+  <component name="NewModuleRootManager" inherit-compiler-output="true">
+    <exclude-output />
+    <content url="file://$MODULE_DIR$">
+      <sourceFolder url="file://$MODULE_DIR$/scripts" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/tests" isTestSource="true" />
+      <excludeFolder url="file://$MODULE_DIR$/bin" />
+      <excludeFolder url="file://$MODULE_DIR$/classes" />
+      <excludeFolder url="file://$MODULE_DIR$/scripts/bin" />
+    </content>
+    <orderEntry type="inheritedJdk" />
+    <orderEntry type="sourceFolder" forTests="false" />
+    <orderEntry type="module" module-name="studio" exported="" />
+
+      <orderEntry type="module-library" >
+        <library>
+          <CLASSES>
+            <root url="jar://$MODULE_DIR$/buildLibs\cats-core_2.12-2.6.1.jar!/" />
+          </CLASSES>
+          <JAVADOC />
+          <SOURCES />
+        </library>
+      </orderEntry>"
+      <orderEntry type="module-library" >
+        <library>
+          <CLASSES>
+            <root url="jar://$MODULE_DIR$/buildLibs\cats-effect-kernel_2.12-3.2.1.jar!/" />
+          </CLASSES>
+          <JAVADOC />
+          <SOURCES />
+        </library>
+      </orderEntry>"
+      <orderEntry type="module-library" >
+        <library>
+          <CLASSES>
+            <root url="jar://$MODULE_DIR$/buildLibs\cats-effect-std_2.12-3.2.1.jar!/" />
+          </CLASSES>
+          <JAVADOC />
+          <SOURCES />
+        </library>
+      </orderEntry>"
+      <orderEntry type="module-library" >
+        <library>
+          <CLASSES>
+            <root url="jar://$MODULE_DIR$/buildLibs\cats-effect_2.12-3.2.1.jar!/" />
+          </CLASSES>
+          <JAVADOC />
+          <SOURCES />
+        </library>
+      </orderEntry>"
+      <orderEntry type="module-library" >
+        <library>
+          <CLASSES>
+            <root url="jar://$MODULE_DIR$/buildLibs\cats-kernel_2.12-2.6.1.jar!/" />
+          </CLASSES>
+          <JAVADOC />
+          <SOURCES />
+        </library>
+      </orderEntry>"
+      <orderEntry type="module-library" >
+        <library>
+          <CLASSES>
+            <root url="jar://$MODULE_DIR$/buildLibs\lib-algo-1-3-hedge-1.0.0.jar!/" />
+          </CLASSES>
+          <JAVADOC />
+          <SOURCES />
+        </library>
+      </orderEntry>"
+      <orderEntry type="module-library" >
+        <library>
+          <CLASSES>
+            <root url="jar://$MODULE_DIR$/buildLibs\simulacrum-scalafix-annotations_2.12-0.5.4.jar!/" />
+          </CLASSES>
+          <JAVADOC />
+          <SOURCES />
+        </library>
+      </orderEntry>"
+
+
+    <orderEntry type="library" name="scala-hmm-sdk" level="project" />
+    <orderEntry type="library" scope="TEST" name="scala-hmm-sdk" level="project" />
+  </component>
+</module>
+    

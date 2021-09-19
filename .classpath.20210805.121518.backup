@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<classpath>
+  <classpathentry excluding="bin/**" kind="src" path="scripts"/>
+  
+  <classpathentry kind="con" path="org.scala-ide.sdt.launching.SCALA_CONTAINER"/>
+  <classpathentry kind="con" path="org.eclipse.jdt.launching.JRE_CONTAINER"/>
+  <classpathentry combineaccessrules="false" kind="src" path="/studio"/>
+  
+  <classpathentry kind="output" path="classes"/>
+</classpath>
+    

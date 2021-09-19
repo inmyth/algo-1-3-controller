@@ -1,0 +1,11 @@
+dependencies {
+
+    algoLib project(":lib-algo-1-3-hedge")
+//    algoLib "org.typelevel:cats-core_2.12:2.6.1"
+//    algoLib 'org.typelevel:cats-effect_2.12:3.2.1'
+//    testCompile scalaCross("org.scalatest:scalatest:3.2.9")
+//    testRuntimeOnly "com.vladsch.flexmark:flexmark-all:0.35.10"
+//    testCompile libDep('hsoft:lib-test-fmk:1.5.0')
+
+
+}

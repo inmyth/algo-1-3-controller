@@ -1,0 +1,9 @@
+strategy.version.minor=0
+strategy.description=
+strategy.version.major=0
+strategy.author=
+strategy.signature=
+strategy.name=mrt
+strategy.vendor=
+strategy.version.macro=0
+strategy.compatibility=2.28.9

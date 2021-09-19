@@ -1,0 +1,7 @@
+{
+  "parameters": {},
+  "controller": {
+    "Controller.scala": {}
+  },
+  "signalScope": "strategy"
+}
