@@ -99,22 +99,24 @@ trait Controller extends NativeController {
               .map(_.qtyOnMarketL)
               .sum
             )
-            .getOrElse(0L)
+            .getOrElse(0L) * -1
         case "DYNAMIC" =>
           autoSource.latest
             .map(_.sellStatuses(0)).map(p => {
               val v = BigDecimal(p.priceOnMarket).setScale(2, RoundingMode.HALF_EVEN)
               if(bdProjectedPrice >= v && v >= bdOwnBestAsk) p.qtyOnMarketL else 0L
             })
-            .getOrElse(0L)
+            .getOrElse(0L) * -1
         case _ => 0L
       }
     }
     else{
      0L // own orders are not matched
     }
-    // CALL dw, buy dw-> sell ul, delta is positive
-    // PUT dw, buy dw -> buy ul, delta is negative
+    // CALL dw buy, order is positive , delta is positive, buy dw-> sell ul
+    // PUT dw, buy, order is positive, delta is negative, buy dw -> buy ul
+    // CALL dw sell, order is negative, delta is positive, sell dw -> buy ul
+    // PUT dw sell, order is negative, delta is negative, sell dw -> sell ul
     BigDecimal(qty * signedDelta * -1).setScale(0, RoundingMode.HALF_EVEN).toLong // positive = buy ul, negative = sell ul
   }
 
