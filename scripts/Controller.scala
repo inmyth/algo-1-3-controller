@@ -23,8 +23,6 @@ import scala.collection.JavaConverters._
 import scala.language.higherKinds
 import scala.math.BigDecimal.RoundingMode
 
-// case class MyMessage(myParam : Int)
-// define parameters from AlgoInstanceParameters (AlgoInstanceConfigurations, AlgoProperty maybe not needed)
 
 trait Controller extends NativeController {
   val portfolioId: String
@@ -120,40 +118,33 @@ trait Controller extends NativeController {
     BigDecimal(qty * signedDelta * -1).setScale(0, RoundingMode.HALF_EVEN).toLong // positive = buy ul, negative = sell ul
   }
 
-  def getPutOrCall(inDe: InstrumentDescriptor): PutCall = ???
+  def getPutOrCall(inDe: InstrumentDescriptor): Option[PutCall] =
+    if(inDe.getName.length < 5) None else {
+      inDe.getName.toList(5) match {
+        case 'C' => Some(CALL)
+        case 'P' => Some(PUT)
+        case _ => None
+      }
+    }
+
 
   def getDelta(dwId: String): Option[Double] = source[Pricing].get(dwId, "DEFAULT").latest.map(_.delta) // negative = put //Nop will confirm DEFAULT or DYNAMIC or both
 
-//  def calcResidual(dwList: List[InstrumentDescriptor]) = // negative = offer/sell order
-//    (dwList.map(p => getDelta(p.getUniqueId)), dwList.map(getProjectedVolume))
-//      .zipped
-//      .toList
-//      .map {
-//        case (Some(delta), Some(vol)) => vol * Math.abs(delta) // if delta can be negative then make it absolute
-//        case _ => 0
-//      }
-//      .sum
-
-//  def calcTotalResidual(dwList: List[InstrumentDescriptor]) = calcResidual(dwList) + 0 // dailyResidual// Nop: will come from horizon
-  // TotalResidual = SUM(ProjectedDWMatch*Delta) + DailyResidual
-
-  def main: Either[guardian.Error, List[Order]] = {
+  def main: Either[guardian.Error, Order] = {
     val dwList = getDwList(dictionaryService, ulId)
 
     val dwProjectedPriceList = dwList.map(getProjectedPrice)
-//    val dwProjectedVolumeList = dwList.map(getProjectedVolume)
     val bestBidPriceList = dwList.map(getOwnBestBidPrice)
     val bestAskPriceList = dwList.map(getOwnBestAskPrice)
     val deltaList = dwList.map(p => getDelta(p.getUniqueId))
     val dwPutCallList = dwList.map(getPutOrCall)
-//    val totalResidual = calcTotalResidual(dwList)
 
     val signedDeltaList = (deltaList, dwPutCallList)
       .zipped
       .toList
       .map{
-        case (Some(delta), CALL) => 1 * delta
-        case (Some(delta), PUT) => -1 * delta
+        case (Some(delta), Some(CALL)) => 1 * delta
+        case (Some(delta), Some(PUT)) => -1 * delta
         case _ => 0
       }
 
@@ -170,20 +161,17 @@ trait Controller extends NativeController {
         case ((a,b,c,d),e) => (a,b,c,d,e.getUniqueId)
       }
       .map(p => calcUlQtyPreResidual(p._1, p._2, p._3, p._4, p._5))
-      .map(_ + dailyResidual)
+      .sum + dailyResidual
 
-    val buySell = BuySell.BUY
+
     val ulProjectedPrice = getProjectedPrice(ulInstrument)
       .map(BigDecimal(_))
-      .map(Algo.getPriceAfterTicks(if(buySell==BuySell.BUY) true else false, _))
+      .map(Algo.getPriceAfterTicks(if(totalResidual < 0) true else false, _))
       .map(_.toDouble)
       .getOrElse(0.0D)
 
-
-    val orders = totalResidual
-      .map(p => Algo.createOrder(p, ulProjectedPrice, if(p > 0) BuySell.BUY else BuySell.SELL, UUID.randomUUID().toString))
-
-    Right(orders) // send orders
+    val order = Algo.createOrder(totalResidual, ulProjectedPrice, if(totalResidual > 0) BuySell.BUY else BuySell.SELL, UUID.randomUUID().toString)
+    Right(order) // send orders
   }
 
   onMessage { case Load => /*
@@ -348,185 +336,3 @@ trait Controller extends NativeController {
 //      })
     case Start =>
   }
-
-//  def createApp[F[_]: Monad](symbol: String): Algo[F] = {
-//    val a = new LiveOrdersInMemInterpreter[F]
-//    val b = new UnderlyingPortfolioInterpreter[F]
-//    val c = new PendingOrdersInMemInterpreter[F]
-//    val d = new PendingCalculationInMemInterpreter[F]
-//    val e = Map.empty[String, Source[Summary]]
-//    val f = (s: String, d: Double) => ()
-//    val g = (s: String) => (log.info(s))
-//    new Algo[F](a, b, c, d, symbol,  e, f, g)
-//  }
-//
-//  def createOrder(id: String, nanos: Long, qty: Long, price: Double, buySell: Int): Order = {
-//    val x = Algo.createOrder(qty, price, buySell, id)
-//    x.setTimestampNanos(nanos) // assume we are the exchange who can assign timestamp
-//    x
-//  }
-//  val rawOrderBuy = createOrder("id1", 10L, 500L, 50.0, BuySell.BUY)
-//  val dw1 = "PTT@ABC"
-//val symbol ="PTT"
-//  onMessage {
-//    // react on message here
-//    // case MyMessage(i) =>
-//    case Load =>
-//      val x = for {
-//        a <- Monad[Id].pure(createApp[Id](symbol))
-//        _ <- a.pendingOrdersRepo.put(InsertOrder(rawOrderBuy))
-//        c <- a.handleOnSignal(dw1)
-//      } yield (c)
-//
-//      log.info(s"AAA  $x")
-//      // Algo.init(dw, ul)
-//
-//      val calQty = 135L
-//      val q1     = 100L
-//      val q2     = 30L
-//      val q3     = 10L
-//      val liveOrders = List(
-//        createOrder("id1", 10L, q1, 50.0, BuySell.BUY),
-//        createOrder("id2", 11L, q2, 50.0, BuySell.BUY),
-//        createOrder("id3", 12L, q3, 50.0, BuySell.BUY)
-//      )
-//      val y = for {
-//        a <- Monad[Id].pure(createApp[Id](symbol))
-//        _ = liveOrders.foreach(a.liveOrdersRepo.putOrder(symbol, _))
-//        b = a.liveOrdersRepo.getOrdersByTimeSortedDown(symbol)
-//        c = a.trimLiveOrders(b, calQty, ListBuffer.empty)
-//      } yield c
-//      log.info(s"BBB  $y")
-//        // instrument.onUpdate(algo.onUpdate)
-//
-//    case Start =>
-//
-//  }
-//
-
-
-}
-
-
-/*
-package simple1
-
-import algotrader.api.NativeController
-import algotrader.api.Messages._
-import com.hsoft.hmm.api.automaton.spi.DefaultAutomaton
-import com.hsoft.hmm.api.automaton.{Automaton, AutomatonReaderFactory}
-import com.hsoft.hmm.api.source.position.RiskPositionDetailsSourceBuilder
-import com.hsoft.hmm.api.source.pricing.{Pricing, PricingSourceBuilder}
-import com.hsoft.hmm.posman.api.position.container.RiskPositionDetailsContainer
-import com.ingalys.imc.order.Validity
-import horizontrader.plugins.hmm.connections.service.StoreSelectionFactoryProvider
-import horizontrader.plugins.hmm.services.automaton.AutoManagerService
-
-import java.util.Objects.isNull
-
-
-//dictionary
-import horizontrader.plugins.hmm.connections.service.IDictionaryProvider
-//instrument
-import horizontrader.services.instruments.InstrumentDescriptor
-//summarySource
-import algotrader.api.source.summary.SummarySourceBuilder
-import com.ingalys.imc.summary._
-//summaryDepth
-import algotrader.api.source.depth.DepthSourceBuilder
-import com.ingalys.imc.depth._
-//Get DW under UL
-import scala.collection.JavaConverters._
-import com.hsoft.datamaster.product.ProductTypes
-import horizontrader.services.instruments.InstrumentInfoService
-import com.hsoft.datamaster.product.Derivative
-//Get DeltaCash
-import com.hsoft.hmm.posman.api.position.container.RiskPositionByULContainer
-import com.hsoft.hmm.api.source.position.RiskPositionByUlSourceBuilder
-//Get Delta
-import com.hsoft.hmm.api.source.automatonstatus.AutomatonStatus
-import com.ingalys.imc.uss.dictgen.dict.USSDictGenDictManager.Source
-
-trait controller extends NativeController {
-  val instrument: InstrumentDescriptor
-  val summarySource = source[Summary].get(instrument)
-  val summaryDepth = source[Depth].get(instrument)
-  val dictionaryService = getService[IDictionaryProvider]
-  val ulId:String
-  val portfolioId:String = "JV"
-
-  val SPOT_BID_CF = 0x40001001
-  val SPOT_ASK_CF = 0x40001002
-  val DELTA_CF = 0x40000123
-  val GAMMA_CF = 0x40001000
-
-  onMessage {
-    // react on message here
-    // case MyMessage(i) =>
-    case Load =>{
-      //summarySource.filter(s => s.sellPrice.isDefined).map(s=> TickerInit(s.sellPrice.get)).onUpdate(in => processMessage(in))
-      summarySource.filter(s=>s.theoOpenPrice.isDefined).onUpdate(s => log.info(s"ProjPx= " + s.theoOpenPrice.get))
-      summarySource.filter(s=>s.theoOpenVolume.isDefined).onUpdate(s => log.info(s"ProjQty= " + s.theoOpenVolume.get))
-      summarySource.filter(s=>s.buyPrice.isDefined).onUpdate(s => log.info(s"BestBid= " + s.buyPrice.get)) //BestBidPx
-      summarySource.filter(s=>s.buyQty.isDefined).onUpdate(s => log.info(s"QtyBid= " + s.buyQty.get))
-      summarySource.filter(s=>s.sellPrice.isDefined).onUpdate(s => log.info(s"BestOffer= " + s.sellPrice.get)) //BestAskPx
-      summarySource.filter(s=>s.sellQty.isDefined).onUpdate(s => log.info(s"QtyOffer= " + s.sellQty.get))
-      summarySource.filter(s=>s.last.isDefined).onUpdate(s => log.info(s"LastPx= " + s.last.get)) //LastPx
-      summarySource.filter(s=>s.closePrevious.isDefined).onUpdate(s => log.info(s"PrevPx= " + s.closePrevious.get)) //Previous Close Price
-
-      //summaryDepth.onUpdate(d => log.info(s"Bid1= "+d.getBuy(1)))
-      summaryDepth.filter(d => d.getBuy(0) != null).onUpdate(d => log.info(s"Bid0= "+d.getBuy(0).getPrice + "BidQty0="+d.getBuy(0).getQuantityL))
-      //summaryDepth.filter(d => d.getSell(0) != null).onUpdate(d => log.info(s"Ask0= "+d.getSell(0).getPrice + "AskQty0="+d.getSell(0).getQuantityL))
-
-      summaryDepth.onUpdate(d => {
-        log.info(s"BuyCount="+d.getBuyCount)
-        var i:Int = 0
-        for (i <- 0 until d.getBuyCount) {
-          log.info(s"MktBid"+i+"="+d.getBuy(i).getPrice+" MktBidQty"+i+"="+d.getBuy(i).getQuantityL)
-        }
-        log.info(s"SellCount="+d.getSellCount)
-        i=0
-        for (i <- 0 until d.getSellCount) {
-          log.info(s"MktAsk"+i+"="+d.getSell(i).getPrice+" MktAskQty"+i+"="+d.getBuy(i).getQuantityL)
-        }
-      })
-
-      source[RiskPositionByULContainer].get(portfolioId, ulId, true).onUpdate(p => {
-        log.info (s"Total Delta Cash="+p.getTotalPosition.getDeltaCashUlCurr)
-        log.info (s"Today Delta Cash="+p.getTodayPosition.getDeltaCashUlCurr)
-        log.info (s"Yesterday Delta Cash="+p.getYesterdayPosition.getDeltaCashUlCurr)
-      })
-
-      //val automatonSource = source[AutomatonStatus].get("XBKK","DEFAULT","BTS19C2110A@XBKK","REFERENCE").onUpdate(a => {})
-
-      val automan = new DefaultAutomaton("SET-EMAPI-HMM-PROXY","BTS19C2110A@XBKK","DEFAULT")
-      log.info (s"ProductID="+automan.getProductId)
-      log.info (s"BaseBidSize="+automan.getBaseBidSize)
-      log.info (s"BaseAskSize="+automan.getBaseAskSize)
-
-      val SymbolID:String = "BTS01C2109A@XBKK"
-
-      val PricingSource = source[Pricing].get(SymbolID,"DEFAULT")
-      PricingSource.filter(p => p.getDelta != null).onUpdate(p => log.info(s"ProductID="+p.getProductId+"Delta="+p.getDelta))
-
-      val PositionSource = source[RiskPositionDetailsContainer].get(portfolioId,"BTS19C2110A@XBKK", true)
-      PositionSource.onUpdate(p => log.info(s"TotalPosition of "+p.getProductId+" TotalPosition="+p.getTotalPosition.getNetQty))
-
-      dictionaryService.getDictionary.getProducts(null).values().asScala
-        .filter(p => p.getProductType == ProductTypes.WARRANT)
-        .map(p => p.asInstanceOf[Derivative])
-        .filter(d => d.getUlId == ulId)
-        .foreach(d => {
-            var DWinstrument:InstrumentDescriptor = null
-            if (d.getProductType == ProductTypes.WARRANT) {
-              DWinstrument = getService[InstrumentInfoService].getInstrumentByUniqueId("SET", d.getId)
-              //log.info(s"DWinstrument="+DWinstrument)
-              log.info(s"Subscribing to Executions on [${d}]")
-            }
-        })
-    }
-    case Start =>
-  }
-
-}
- */
