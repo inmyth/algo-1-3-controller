@@ -1,5 +1,7 @@
 import algotrader.api.Messages.{Load, Start}
 import algotrader.api.NativeController
+import cats.{Applicative, Monad}
+import cats.data.EitherT
 import com.hsoft.datamaster.product.{Derivative, ProductTypes}
 import com.hsoft.hmm.api.automaton.spi.DefaultAutomaton
 import com.hsoft.hmm.api.source.automatonstatus.AutomatonStatus
@@ -11,6 +13,7 @@ import com.ingalys.imc.depth.DepthOrder
 import com.ingalys.imc.order.Order
 import com.ingalys.imc.summary.Summary
 import guardian.Algo
+import guardian.Error
 import guardian.Entities.PutCall.{CALL, PUT}
 import guardian.Entities.{Direction, PutCall}
 import horizontrader.plugins.hmm.connections.service.IDictionaryProvider
@@ -129,52 +132,56 @@ trait Controller extends NativeController {
       }
     }
 
-
-  def getDelta(dwId: String): Option[Double] = source[Pricing].get(dwId, "DEFAULT").latest.map(_.delta) // negative = put //Nop will confirm DEFAULT or DYNAMIC or both
-
-  def main: Either[guardian.Error, Order] = {
-    val dwList = getDwList(dictionaryService, ulId)
-
-    val dwProjectedPriceList = dwList.map(getProjectedPrice)
-    val bestBidPriceList = dwList.map(getOwnBestBidPrice)
-    val bestAskPriceList = dwList.map(getOwnBestAskPrice)
-    val deltaList = dwList.map(p => getDelta(p.getUniqueId))
-    val dwPutCallList = dwList.map(getPutOrCall)
-
-    val signedDeltaList = (deltaList, dwPutCallList)
-      .zipped
-      .toList
-      .map{
-        case (Some(delta), Some(CALL)) => 1 * delta
-        case (Some(delta), Some(PUT)) => -1 * delta
-        case _ => 0
-      }
-
-    val totalResidual = (bestBidPriceList, bestAskPriceList, dwProjectedPriceList)
-      .zipped
-      .toList
-      .zip(signedDeltaList)
-      .map{
-        case ((Some(a),Some(b),Some(c)),d) => (a,b,c,d)
-        case ((_,_,_),d) => (0,0,0,d)
-      }
-      .zip(dwList)
-      .map{
-        case ((a,b,c,d),e) => (a,b,c,d,e.getUniqueId)
-      }
-      .map(p => calcUlQtyPreResidual(p._1, p._2, p._3, p._4, p._5))
-      .sum + dailyResidual
-
-
-    val ulProjectedPrice = getProjectedPrice(ulInstrument)
+  def getUlProjectedPrice(ulInst: InstrumentDescriptor, totalResidual: Long): Either[Error, Double] =
+    getProjectedPrice(ulInst)
       .map(BigDecimal(_))
       .map(Algo.getPriceAfterTicks(if(totalResidual < 0) true else false, _))
       .map(_.toDouble)
-      .getOrElse(0.0D)
+    .match {
+      case Some(value) => Right(value)
+      case None => Left(Error.MarketError(s"Underlying price not found for ${ulInst.getName}"))
+    }
 
-    val order = Algo.createOrder(totalResidual, ulProjectedPrice, if(totalResidual > 0) BuySell.BUY else BuySell.SELL, UUID.randomUUID().toString)
-    Right(order) // send orders
-  }
+
+  def getDelta(dwId: String): Option[Double] = source[Pricing].get(dwId, "DEFAULT").latest.map(_.delta) // negative = put //Nop will confirm DEFAULT or DYNAMIC or both
+
+  def main[F[_]: Monad]: EitherT[F, guardian.Error, Order] =
+    for {
+      dwList <- EitherT.rightT(getDwList(dictionaryService, ulId))
+      dwProjectedPriceList <- EitherT.rightT(dwList.map(getProjectedPrice))
+      bestBidPriceList <- EitherT.rightT(dwList.map(getOwnBestBidPrice))
+      bestAskPriceList <- EitherT.rightT(dwList.map(getOwnBestAskPrice))
+      deltaList <- EitherT.rightT(dwList.map(p => getDelta(p.getUniqueId)))
+      dwPutCallList <- EitherT.rightT(dwList.map(getPutOrCall))
+      signedDeltaList <- EitherT.rightT(
+        (deltaList, dwPutCallList)
+          .zipped
+          .toList
+          .map{
+            case (Some(delta), Some(CALL)) => 1 * delta
+            case (Some(delta), Some(PUT)) => -1 * delta
+            case _ => 0
+          }
+      )
+      totalResidual <- EitherT.rightT(
+        (bestBidPriceList, bestAskPriceList, dwProjectedPriceList)
+          .zipped
+          .toList
+          .zip(signedDeltaList)
+          .map{
+            case ((Some(a),Some(b),Some(c)),d) => (a,b,c,d)
+            case ((_,_,_),d) => (0,0,0,d)
+          }
+          .zip(dwList)
+          .map{
+            case ((a,b,c,d),e) => (a,b,c,d,e.getUniqueId)
+          }
+          .map(p => calcUlQtyPreResidual(p._1, p._2, p._3, p._4, p._5))
+          .sum + dailyResidual
+      )
+      ulProjectedPrice <- EitherT.fromEither(getUlProjectedPrice(ulInstrument, totalResidual))
+      order = Algo.createOrder(totalResidual, ulProjectedPrice, if(totalResidual > 0) BuySell.BUY else BuySell.SELL, UUID.randomUUID().toString)
+    } yield order
 
   onMessage { case Load => /*
         Get all derivative warrants
