@@ -1,17 +1,8 @@
 dependencies {
 
     algoLib project(":lib-algo-1-3-hedge")
-//    algoLib "org.typelevel:cats-core_2.12:2.6.1"
-//    algoLib 'org.typelevel:cats-effect_2.12:3.2.1'
-//    testCompile scalaCross("org.scalatest:scalatest:3.2.9")
-//    testRuntimeOnly "com.vladsch.flexmark:flexmark-all:0.35.10"
-//    testCompile libDep('hsoft:lib-test-fmk:1.5.0')
     compile scalaCross("org.typelevel:cats-core:2.6.1")
     compile scalaCross("org.typelevel:cats-effect:3.2.1")
-    testCompile scalaCross("org.scalatest:scalatest:3.2.9")
-    testCompile scalaCross("org.mockito:mockito-scala-scalatest:1.16.39")
-    testCompile scalaCross("org.mockito:mockito-scala-cats:1.16.39")
-    testCompile scalaCross("org.mockito:mockito-scala:1.16.39")
     testRuntimeOnly "com.vladsch.flexmark:flexmark-all:0.35.10"
 
 }
