@@ -249,7 +249,9 @@ trait Agent extends NativeTradingAgent {
       ulId,
       preProcess = preProcess[F],
       sendOrder = sendOrderAction,
-      logAlert = log.warn
+      logAlert = log.warn,
+      logInfo = log.info,
+      logError = log.error
     )
 
   source[Summary].get(ulInstrument).map(_.modeStr.get) onUpdate {
