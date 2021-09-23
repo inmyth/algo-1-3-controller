@@ -6,10 +6,9 @@ import cats.{Applicative, Id, Monad}
 import cats.data.EitherT
 import com.hsoft.datamaster.product.{Derivative, ProductTypes}
 import com.hsoft.hmm.api.source.automatonstatus.AutomatonStatus
-import com.hsoft.hmm.api.source.position.RiskPositionByUlSourceBuilder
+import com.hsoft.hmm.api.source.position.{RiskPositionByUlSourceBuilder, RiskPositionDetailsSourceBuilder}
 import com.hsoft.hmm.api.source.pricing.{Pricing, PricingSourceBuilder}
-import com.hsoft.hmm.posman.api.position.container.RiskPositionByULContainer
-
+import com.hsoft.hmm.posman.api.position.container.{RiskPositionByULContainer, RiskPositionDetailsContainer}
 import com.ingalys.imc.order.Order
 import com.ingalys.imc.summary.Summary
 import guardian.{Algo, Error, LiveOrdersInMemInterpreter, PendingCalculationInMemInterpreter, PendingOrdersInMemInterpreter, UnderlyingPortfolioInterpreter}
@@ -52,6 +51,8 @@ trait Agent extends NativeTradingAgent {
   def getOwnBestBidPrice(inDe: InstrumentDescriptor): Option[Double] = source[Summary].get(inDe).latest.flatMap(_.buyPrice)
 
   def getOwnBestAskPrice(inDe: InstrumentDescriptor): Option[Double] = source[Summary].get(inDe).latest.flatMap(_.sellPrice)
+
+  def getPorfolioQty(): Option[Double] = source[RiskPositionDetailsContainer].get(portfolioId,ulId, true).latest.map(_.getTotalPosition.getNetQty)
 
   def calcUlQtyPreResidual(ownBestBid: Double, ownBestAsk: Double, marketProjectedPrice: Double, signedDelta: Double, dwId: String, kind: String = "DEFAULT"): Long = {
     val autoSource =  source[AutomatonStatus].get("SET-EMAPI-HMM-PROXY", kind, dwId,"REFERENCE")
@@ -209,16 +210,15 @@ trait Agent extends NativeTradingAgent {
   }
 
   def initAlgo[F[_]: Applicative: Monad]: Algo[F] = Algo(
-    liveOrdersRepo = new LiveOrdersInMemInterpreter[F](),
-    portfolioRepo = new UnderlyingPortfolioInterpreter[F](),
-    pendingOrdersRepo = new PendingOrdersInMemInterpreter[F](),
-    pendingCalculationRepo = new PendingCalculationInMemInterpreter[F](),
-    ulId,
-    preProcess = preProcess[F],
-    sendOrder = sendOrderAction,
-    logAlert = log.warn
+      liveOrdersRepo = new LiveOrdersInMemInterpreter[F](),
+      portfolioRepo = new UnderlyingPortfolioInterpreter[F](),
+      pendingOrdersRepo = new PendingOrdersInMemInterpreter[F](),
+      pendingCalculationRepo = new PendingCalculationInMemInterpreter[F](),
+      ulId,
+      preProcess = preProcess[F],
+      sendOrder = sendOrderAction,
+      logAlert = log.warn
   )
-
 
   source[Summary].get(ulInstrument).map(_.modeStr.get)onUpdate{
     case "Startup" =>
@@ -226,6 +226,7 @@ trait Agent extends NativeTradingAgent {
 
     case "Pre-Open1" =>
       algo = Some(initAlgo[Id])
+      algo.map(_.handleOnLoad(ulId, getPorfolioQty().getOrElse(0.0).toLong))
 
     case "Open1" =>
       algo = None
@@ -235,12 +236,14 @@ trait Agent extends NativeTradingAgent {
 
     case "Pre-Open2" =>
       algo = Some(initAlgo[Id])
+      algo.map(_.handleOnLoad(ulId, getPorfolioQty().getOrElse(0.0).toLong))
 
     case "Open2" =>
       algo = None
 
     case "Pre-close" =>
       algo = Some(initAlgo[Id])
+      algo.map(_.handleOnLoad(ulId, getPorfolioQty().getOrElse(0.0).toLong))
 
     case "OffHour" =>
       algo = None
