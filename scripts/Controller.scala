@@ -7,7 +7,6 @@ import scala.language.higherKinds
 
 trait Controller extends NativeController {
   val portfolioId: String
-  val ulId: String // "PTT@XBKK"
   val ulInstrument: InstrumentDescriptor
   val hedgeInstrument: InstrumentDescriptor //PTT@XBKK ?? Nop will find a way // String => SET-EMAPI-HMM-PROXY|ADVANC@XBKK
   val dictionaryService: IDictionaryProvider = getService[IDictionaryProvider]
@@ -21,7 +20,6 @@ trait Controller extends NativeController {
         "Agent.scala",
         Map(
           "portfolioId"       -> portfolioId,
-          "ulId"              -> ulId,
           "ulInstrument"      -> ulInstrument,
           "hedgeInstrument"   -> hedgeInstrument,
           "dictionaryService" -> dictionaryService

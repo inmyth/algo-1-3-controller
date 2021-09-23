@@ -30,10 +30,10 @@ import scala.math.BigDecimal.RoundingMode
 
 trait Agent extends NativeTradingAgent {
   val portfolioId: String
-  val ulId: String // "PTT@XBKK"
   val ulInstrument: InstrumentDescriptor
   val hedgeInstrument: InstrumentDescriptor //PTT@XBKK ?? Nop will find a way // String => SET-EMAPI-HMM-PROXY|ADVANC@XBKK
   val dictionaryService: IDictionaryProvider = getService[IDictionaryProvider]
+  val ulId: String                           = ulInstrument.getUniqueId
 
   var algo: Option[Algo[Id]] = None
 
