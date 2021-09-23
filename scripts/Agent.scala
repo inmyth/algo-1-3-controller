@@ -1,50 +1,36 @@
-import algotrader.api.NativeAction
 import horizontrader.services.instruments.InstrumentDescriptor
 import algotrader.api.NativeTradingAgent
 import algotrader.api.Messages._
 import com.ingalys.imc.BuySell
-import horizontrader.services.instruments.InstrumentDescriptor
 import cats.{Applicative, Id, Monad}
 import cats.data.EitherT
 import com.hsoft.datamaster.product.{Derivative, ProductTypes}
-import com.hsoft.hmm.api.automaton.spi.DefaultAutomaton
 import com.hsoft.hmm.api.source.automatonstatus.AutomatonStatus
-import com.hsoft.hmm.api.source.position.{RiskPositionByUlSourceBuilder, RiskPositionDetailsSourceBuilder}
+import com.hsoft.hmm.api.source.position.RiskPositionByUlSourceBuilder
 import com.hsoft.hmm.api.source.pricing.{Pricing, PricingSourceBuilder}
-import com.hsoft.hmm.posman.api.position.container.{RiskPositionByULContainer, RiskPositionDetailsContainer}
-import com.ingalys.imc.BuySell
-import com.ingalys.imc.depth.DepthOrder
+import com.hsoft.hmm.posman.api.position.container.RiskPositionByULContainer
+
 import com.ingalys.imc.order.Order
 import com.ingalys.imc.summary.Summary
-import guardian.{Algo, Error, LiveOrdersInMemInterpreter, LiveOrdersRepoAlgebra, PendingCalculationInMemInterpreter, PendingOrdersInMemInterpreter, UnderlyingPortfolioInterpreter}
+import guardian.{Algo, Error, LiveOrdersInMemInterpreter, PendingCalculationInMemInterpreter, PendingOrdersInMemInterpreter, UnderlyingPortfolioInterpreter}
 import guardian.Entities.PutCall.{CALL, PUT}
 import guardian.Entities.{CustomId, Direction, OrderAction, PutCall}
 import horizontrader.plugins.hmm.connections.service.IDictionaryProvider
-import horizontrader.services.instruments.{InstrumentDescriptor, InstrumentInfoService}
+import horizontrader.services.instruments.InstrumentInfoService
 
-import java.util.UUID
-import scala.Right
-import scala.annotation.tailrec
 import scala.collection.JavaConverters._
 import scala.language.higherKinds
 import scala.math.BigDecimal.RoundingMode
-import scala.collection.JavaConverters._
-import algotrader.api.source.Source
-import com.hsoft.hmm.imsencaps.execution.HMMEncapsMarketDataField
-import com.hsoft.imc.reference.ReferenceMarketDataField
-import com.ingalys.imc.summary.Summary
-import algotrader.api.source.summary._
-import horizontrader.plugins.hmm.connections.service.IDictionaryProvider
+
 
 trait Agent extends NativeTradingAgent {
-
   val portfolioId: String
   val ulId: String // "PTT@XBKK"
   val ulInstrument: InstrumentDescriptor
   val hedgeInstrument: InstrumentDescriptor //PTT@XBKK ?? Nop will find a way // String => SET-EMAPI-HMM-PROXY|ADVANC@XBKK
   val dictionaryService: IDictionaryProvider = getService[IDictionaryProvider]
 
-  var algo: Algo[Id] = null
+  var algo: Option[Algo[Id]] = None
 
   import algotrader.api.source.summary._
 
@@ -236,70 +222,63 @@ trait Agent extends NativeTradingAgent {
 
   source[Summary].get(ulInstrument).map(_.modeStr.get)onUpdate{
     case "Startup" =>
-      algo = null
+      algo = None
 
     case "Pre-Open1" =>
-      algo = initAlgo[Id]
+      algo = Some(initAlgo[Id])
 
     case "Open1" =>
-      algo = null
+      algo = None
 
     case "Intermission" =>
-      algo = null
+      algo = None
 
     case "Pre-Open2" =>
-      algo = initAlgo[Id]
+      algo = Some(initAlgo[Id])
 
     case "Open2" =>
-      algo = null
+      algo = None
 
     case "Pre-close" =>
-      algo = initAlgo[Id]
+      algo = Some(initAlgo[Id])
 
     case "OffHour" =>
-      algo = null
+      algo = None
 
     case "Closed" =>
-      algo = null
+      algo = None
 
     case "Closed2" =>
-      algo = null
+      algo = None
 
     case "AfterMarket" =>
-      algo = null
+      algo = None
 
     case "CIRCUIT_BREAKER" =>
-      algo = null
+      algo = None
 
     case "Pre-OpenTemp" =>
-      algo = null
+      algo = None
 
     case _ =>
-      algo = null
+      algo = None
 
   }
 
   // This is the main function
   source[Summary].get(ulInstrument).onUpdate(_ =>
-    if(algo != null) algo.handleOnSignal()
+    algo.map(_.handleOnSignal())
   )
 
   onOrder {
-
     case Nak(t) =>
-      if(algo != null) algo.handleOnOrderNak(CustomId.fromOrder(t.getOrderCopy), "Nak signal / order rejected")
+      algo.map(_.handleOnOrderNak(CustomId.fromOrder(t.getOrderCopy), "Nak signal / order rejected"))
 
     case Ack(t) =>
-      if(algo != null) algo.handleOnOrderAck(CustomId.fromOrder(t.getOrderCopy))
-
+      algo.map(_.handleOnOrderAck(CustomId.fromOrder(t.getOrderCopy)))
   }
 
   onMessage {
-
     case Start =>
-
-
   }
-
-
 }
