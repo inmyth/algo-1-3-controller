@@ -1,3 +1,5 @@
+package mrt
+
 import algotrader.api.Messages.{Load, Start}
 import algotrader.api.NativeController
 import horizontrader.plugins.hmm.connections.service.IDictionaryProvider

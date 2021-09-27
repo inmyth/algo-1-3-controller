@@ -1,9 +1,12 @@
 dependencies {
 
     algoLib project(":lib-algo-1-3-hedge")
-    compile scalaCross("org.typelevel:cats-core:2.6.1")
-    compile scalaCross("org.typelevel:cats-effect:3.2.1")
-    testRuntimeOnly "com.vladsch.flexmark:flexmark-all:0.35.10"
+//    algoLib scalaCross("org.typelevel:cats-core:2.6.1")
+//    algoLib scalaCross("org.typelevel:cats-effect:3.2.1")
+    algoLib("org.typelevel:cats-core_2.12:2.6.1")
+// https://mvnrepository.com/artifact/org.typelevel/cats-effect
+    algoLib("org.typelevel:cats-effect_2.12:3.2.1")
+
 
 }
 

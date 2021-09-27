@@ -1,7 +1,30 @@
 {
-  "parameters": {},
+  "parameters": {
+    "portfolioId": {
+      "type": "java.lang.String",
+      "mutable": false
+    },
+    "ulInstrument": {
+      "type": "horizontrader.services.instruments.InstrumentDescriptor",
+      "mutable": false
+    },
+    "hedgeInstrument": {
+      "type": "horizontrader.services.instruments.InstrumentDescriptor",
+      "mutable": false
+    }
+  },
   "controller": {
-    "Controller.scala": {}
+    "Controller.scala": {
+      "portfolioId": {
+        "parameter": "portfolioId"
+      },
+      "ulInstrument": {
+        "parameter": "ulInstrument"
+      },
+      "hedgeInstrument": {
+        "parameter": "hedgeInstrument"
+      }
+    }
   },
   "signalScope": "strategy"
 }
