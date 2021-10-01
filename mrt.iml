@@ -16,61 +16,7 @@
       <orderEntry type="module-library" >
         <library>
           <CLASSES>
-            <root url="jar://$MODULE_DIR$/buildLibs\cats-core_2.12-2.6.1.jar!/" />
-          </CLASSES>
-          <JAVADOC />
-          <SOURCES />
-        </library>
-      </orderEntry>"
-      <orderEntry type="module-library" >
-        <library>
-          <CLASSES>
-            <root url="jar://$MODULE_DIR$/buildLibs\cats-effect-kernel_2.12-3.2.1.jar!/" />
-          </CLASSES>
-          <JAVADOC />
-          <SOURCES />
-        </library>
-      </orderEntry>"
-      <orderEntry type="module-library" >
-        <library>
-          <CLASSES>
-            <root url="jar://$MODULE_DIR$/buildLibs\cats-effect-std_2.12-3.2.1.jar!/" />
-          </CLASSES>
-          <JAVADOC />
-          <SOURCES />
-        </library>
-      </orderEntry>"
-      <orderEntry type="module-library" >
-        <library>
-          <CLASSES>
-            <root url="jar://$MODULE_DIR$/buildLibs\cats-effect_2.12-3.2.1.jar!/" />
-          </CLASSES>
-          <JAVADOC />
-          <SOURCES />
-        </library>
-      </orderEntry>"
-      <orderEntry type="module-library" >
-        <library>
-          <CLASSES>
-            <root url="jar://$MODULE_DIR$/buildLibs\cats-kernel_2.12-2.6.1.jar!/" />
-          </CLASSES>
-          <JAVADOC />
-          <SOURCES />
-        </library>
-      </orderEntry>"
-      <orderEntry type="module-library" >
-        <library>
-          <CLASSES>
             <root url="jar://$MODULE_DIR$/buildLibs\lib-algo-1-3-hedge-1.0.0.jar!/" />
-          </CLASSES>
-          <JAVADOC />
-          <SOURCES />
-        </library>
-      </orderEntry>"
-      <orderEntry type="module-library" >
-        <library>
-          <CLASSES>
-            <root url="jar://$MODULE_DIR$/buildLibs\simulacrum-scalafix-annotations_2.12-0.5.4.jar!/" />
           </CLASSES>
           <JAVADOC />
           <SOURCES />
