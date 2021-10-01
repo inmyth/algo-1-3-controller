@@ -1,3 +1,5 @@
+package mrt
+
 import horizontrader.services.instruments.InstrumentDescriptor
 import algotrader.api.NativeTradingAgent
 import algotrader.api.Messages._
@@ -11,8 +13,7 @@ import com.hsoft.hmm.api.source.pricing.{Pricing, PricingSourceBuilder}
 import com.hsoft.hmm.posman.api.position.container.{RiskPositionByULContainer, RiskPositionDetailsContainer}
 import com.ingalys.imc.order.Order
 import com.ingalys.imc.summary.Summary
-import guardian.Algo.{xxx2, xxx3}
-import guardian.Manager
+
 //import guardian.Algo.xxx2
 import guardian.{
   Algo,
@@ -36,7 +37,9 @@ trait Agent extends NativeTradingAgent {
   val ulInstrument: InstrumentDescriptor
   val hedgeInstrument: InstrumentDescriptor //PTT@XBKK ?? Nop will find a way // String => SET-EMAPI-HMM-PROXY|ADVANC@XBKK
   val dictionaryService: IDictionaryProvider
-//  val ulId: String = ulInstrument.getUniqueId // CAUSES ERROR
+  val ulId: String = ulInstrument.getUniqueId
+
+  var algo: Option[Algo[Id]] = None
 
   import algotrader.api.source.summary._
 
@@ -173,6 +176,9 @@ trait Agent extends NativeTradingAgent {
       .latest
       .map(p => BigDecimal(p.getTotalPosition.getDeltaCashUlCurr / p.getTotalPosition.getUlSpot / pointValue))
 
+  def validatePositiveAmount(order: Order): Either[Error, Unit] =
+    Either.cond(order.getQuantityL > 0, (), Error.StateError("Pre-process order qty cannot be negative"))
+
   def sendOrderAction(act: OrderAction): Order =
     act match {
       case OrderAction.InsertOrder(order) =>
@@ -198,88 +204,123 @@ trait Agent extends NativeTradingAgent {
         )
     }
 
-  xxx3(ulInstrument)
-//  val manager: Manager = Manager.init(
-//    getDwList = getDwList,
-//    getDwProjectedPrice = getProjectedPrice,
-//    getOwnBestAskPrice = getOwnBestAskPrice,
-//    calcUlQtyPreResidual = calcUlQtyPreResidual,
-//    getPutOrCall = getPutOrCall,
-//    getUlProjectedPrice = getUlProjectedPrice,
-//    getDelta = getDelta,
-//    getPointValue = getPointValue,
-//    getAbsoluteResidual = getAbsoluteResidual,
-//    ulInstrument = ulInstrument,
-//    dictionaryService = dictionaryService,
-//    hedgeInstrument = hedgeInstrument,
-//    sendOrder = sendOrderAction,
-//    logAlert = log.warn,
-//    logInfo = log.info,
-//    logError = log.error
-//  )
+  def preProcess[F[_]: Monad]: EitherT[F, Error, Order] =
+    for {
+      dwList               <- EitherT.rightT[F, guardian.Error](getDwList(dictionaryService, ulId))
+      dwProjectedPriceList <- EitherT.rightT[F, guardian.Error](dwList.map(getProjectedPrice))
+      bestBidPriceList     <- EitherT.rightT[F, guardian.Error](dwList.map(getOwnBestBidPrice))
+      bestAskPriceList     <- EitherT.rightT[F, guardian.Error](dwList.map(getOwnBestAskPrice))
+      deltaList            <- EitherT.rightT[F, guardian.Error](dwList.map(p => getDelta(p.getUniqueId)))
+      dwPutCallList        <- EitherT.rightT[F, guardian.Error](dwList.map(getPutOrCall))
+      pointValue           <- EitherT.rightT[F, guardian.Error](getPointValue(hedgeInstrument))
+      absoluteResidual     <- EitherT.rightT[F, guardian.Error](getAbsoluteResidual(pointValue, ulId))
+      signedDeltaList <- EitherT.rightT[F, guardian.Error](
+        (deltaList, dwPutCallList).zipped.toList
+          .map {
+            case (Some(delta), Some(CALL)) => 1 * delta
+            case (Some(delta), Some(PUT))  => -1 * delta
+            case _                         => 0
+          }
+      )
+      partialResidual <- EitherT.rightT[F, guardian.Error](
+        (bestBidPriceList, bestAskPriceList, dwProjectedPriceList).zipped.toList
+          .zip(signedDeltaList)
+          .map {
+            case ((Some(a), Some(b), Some(c)), d) => (a, b, c, d)
+            case ((_, _, _), d)                   => (0.0, 0.0, 0.0, d)
+          }
+          .zip(dwList)
+          .map {
+            case ((a, b, c, d), e) => (a, b, c, d, e.getUniqueId)
+          }
+          .map(p => calcUlQtyPreResidual(p._1, p._2, p._3, p._4, p._5))
+          .sum
+      )
+      totalResidual = partialResidual + absoluteResidual.getOrElse(BigDecimal("0")).toLong
+      direction     = if (totalResidual < 0) Direction.SELL else Direction.BUY
+      hzDirection   = if (direction == Direction.SELL) BuySell.SELL else BuySell.BUY
+      ulProjectedPrice <- EitherT.fromEither(getUlProjectedPrice(ulInstrument, direction))
+      absTotalResidual = Math.abs(totalResidual)
+      order            = Algo.createOrder(absTotalResidual, ulProjectedPrice.toDouble, hzDirection, CustomId.generate)
+      _ <- EitherT.fromEither(validatePositiveAmount(order))
+    } yield order
 
-//  source[Summary].get(ulInstrument).map(_.modeStr.get) onUpdate {
-//    case "Startup" =>
-//      algo = None
-//
-//    case "Pre-Open1" =>
-//      algo = Some(initAlgo[Id])
+  def initAlgo[F[_]: Applicative: Monad]: Algo[F] =
+    Algo(
+      liveOrdersRepo = new LiveOrdersInMemInterpreter[F](),
+      portfolioRepo = new UnderlyingPortfolioInterpreter[F](),
+      pendingOrdersRepo = new PendingOrdersInMemInterpreter[F](),
+      pendingCalculationRepo = new PendingCalculationInMemInterpreter[F](),
+      ulId,
+      preProcess = preProcess[F],
+      sendOrder = sendOrderAction,
+      logAlert = log.warn,
+      logInfo = log.info,
+      logError = log.error
+    )
+
+  source[Summary].get(ulInstrument).map(_.modeStr.get) onUpdate {
+    case "Startup" =>
+      algo = None
+
+    case "Pre-Open1" =>
+      algo = Some(initAlgo[Id])
 //      algo.map(_.handleOnLoad(ulId, getPortfolioQty.getOrElse(0.0).toLong))
-//
-//    case "Open1" =>
-//      algo = None
-//
-//    case "Intermission" =>
-//      algo = None
-//
-//    case "Pre-Open2" =>
-//      algo = Some(initAlgo[Id])
+
+    case "Open1" =>
+      algo = None
+
+    case "Intermission" =>
+      algo = None
+
+    case "Pre-Open2" =>
+      algo = Some(initAlgo[Id])
 //      algo.map(_.handleOnLoad(ulId, getPortfolioQty.getOrElse(0.0).toLong))
-//
-//    case "Open2" =>
-//      algo = None
-//
-//    case "Pre-close" =>
-//      algo = Some(initAlgo[Id])
+
+    case "Open2" =>
+      algo = None
+
+    case "Pre-close" =>
+      algo = Some(initAlgo[Id])
 //      algo.map(_.handleOnLoad(ulId, getPortfolioQty.getOrElse(0.0).toLong))
-//
-//    case "OffHour" =>
-//      algo = None
-//
-//    case "Closed" =>
-//      algo = None
-//
-//    case "Closed2" =>
-//      algo = None
-//
-//    case "AfterMarket" =>
-//      algo = None
-//
-//    case "CIRCUIT_BREAKER" =>
-//      algo = None
-//
-//    case "Pre-OpenTemp" =>
-//      algo = None
-//
-//    case _ =>
-//      algo = None
-//
-//  }
-//
-//  // This is the main function
-//  source[Summary].get(ulInstrument).onUpdate(_ => algo.map(_.handleOnSignal()))
-//
-//  onOrder {
-//    case Nak(t) =>
-//      algo.map(_.handleOnOrderNak(CustomId.fromOrder(t.getOrderCopy), "Nak signal / order rejected"))
-//
-//    case Ack(t) =>
-//      algo.map(_.handleOnOrderAck(CustomId.fromOrder(t.getOrderCopy)))
-//  }
-//
+
+    case "OffHour" =>
+      algo = None
+
+    case "Closed" =>
+      algo = None
+
+    case "Closed2" =>
+      algo = None
+
+    case "AfterMarket" =>
+      algo = None
+
+    case "CIRCUIT_BREAKER" =>
+      algo = None
+
+    case "Pre-OpenTemp" =>
+      algo = None
+
+    case _ =>
+      algo = None
+
+  }
+
+  // This is the main function
+  source[Summary].get(ulInstrument).onUpdate(_ => algo.map(_.handleOnSignal()))
+
+  onOrder {
+    case Nak(t) =>
+      algo.map(_.handleOnOrderNak(CustomId.fromOrder(t.getOrderCopy), "Nak signal / order rejected"))
+
+    case Ack(t) =>
+      algo.map(_.handleOnOrderAck(CustomId.fromOrder(t.getOrderCopy)))
+  }
+
   onMessage {
 
-    case Load  => xxx2(log.error)
+    case Load  =>
     case Start =>
   }
 }
