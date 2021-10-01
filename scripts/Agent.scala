@@ -265,7 +265,7 @@ trait Agent extends NativeTradingAgent {
 
     case "Pre-Open1" =>
       algo = Some(initAlgo[Id])
-//      algo.map(_.handleOnLoad(ulId, getPortfolioQty.getOrElse(0.0).toLong))
+      algo.map(_.handleOnLoad(ulId, getPortfolioQty(ulId).getOrElse(0.0).toLong))
 
     case "Open1" =>
       algo = None
@@ -275,14 +275,14 @@ trait Agent extends NativeTradingAgent {
 
     case "Pre-Open2" =>
       algo = Some(initAlgo[Id])
-//      algo.map(_.handleOnLoad(ulId, getPortfolioQty.getOrElse(0.0).toLong))
+      algo.map(_.handleOnLoad(ulId, getPortfolioQty(ulId).getOrElse(0.0).toLong))
 
     case "Open2" =>
       algo = None
 
     case "Pre-close" =>
       algo = Some(initAlgo[Id])
-//      algo.map(_.handleOnLoad(ulId, getPortfolioQty.getOrElse(0.0).toLong))
+      algo.map(_.handleOnLoad(ulId, getPortfolioQty(ulId).getOrElse(0.0).toLong))
 
     case "OffHour" =>
       algo = None
@@ -319,8 +319,7 @@ trait Agent extends NativeTradingAgent {
   }
 
   onMessage {
-
-    case Load  =>
-    case Start =>
+    case Load  => log.info("Agent Loading")
+    case Start => log.info("Agent starting")
   }
 }
