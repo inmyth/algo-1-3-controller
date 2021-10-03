@@ -38,6 +38,7 @@ trait Agent extends NativeTradingAgent {
   val hedgeInstrument: InstrumentDescriptor //PTT@XBKK ?? Nop will find a way // String => SET-EMAPI-HMM-PROXY|ADVANC@XBKK
   val dictionaryService: IDictionaryProvider
   val ulId: String = ulInstrument.getUniqueId
+  val lotSize: Int = 100
 
   var algo: Option[Algo[Id]] = None
 
@@ -245,13 +246,11 @@ trait Agent extends NativeTradingAgent {
       _ <- EitherT.fromEither(validatePositiveAmount(order))
     } yield order
 
-  def initAlgo[F[_]: Applicative: Monad]: Algo[F] =
+  def initAlgo[F[_]: Applicative: Monad](portfolioQty: Long): F[Algo[F]] =
     Algo(
-      liveOrdersRepo = new LiveOrdersInMemInterpreter[F](),
-      portfolioRepo = new UnderlyingPortfolioInterpreter[F](),
-      pendingOrdersRepo = new PendingOrdersInMemInterpreter[F](),
-      pendingCalculationRepo = new PendingCalculationInMemInterpreter[F](),
       ulId,
+      lotSize,
+      portfolioQty,
       preProcess = preProcess[F],
       sendOrder = sendOrderAction,
       logAlert = log.warn,
@@ -264,8 +263,7 @@ trait Agent extends NativeTradingAgent {
       algo = None
 
     case "Pre-Open1" =>
-      algo = Some(initAlgo[Id])
-      algo.map(_.handleOnLoad(ulId, getPortfolioQty(ulId).getOrElse(0.0).toLong))
+      algo = Some(initAlgo[Id](getPortfolioQty(ulId).getOrElse(0.0).toLong))
 
     case "Open1" =>
       algo = None
@@ -274,15 +272,13 @@ trait Agent extends NativeTradingAgent {
       algo = None
 
     case "Pre-Open2" =>
-      algo = Some(initAlgo[Id])
-      algo.map(_.handleOnLoad(ulId, getPortfolioQty(ulId).getOrElse(0.0).toLong))
+      algo = Some(initAlgo[Id](getPortfolioQty(ulId).getOrElse(0.0).toLong))
 
     case "Open2" =>
       algo = None
 
     case "Pre-close" =>
-      algo = Some(initAlgo[Id])
-      algo.map(_.handleOnLoad(ulId, getPortfolioQty(ulId).getOrElse(0.0).toLong))
+      algo = Some(initAlgo[Id](getPortfolioQty(ulId).getOrElse(0.0).toLong))
 
     case "OffHour" =>
       algo = None
@@ -304,7 +300,6 @@ trait Agent extends NativeTradingAgent {
 
     case _ =>
       algo = None
-
   }
 
   // This is the main function
