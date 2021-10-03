@@ -246,11 +246,11 @@ trait Agent extends NativeTradingAgent {
       _ <- EitherT.fromEither(validatePositiveAmount(order))
     } yield order
 
-  def initAlgo[F[_]: Applicative: Monad] =
+  def initAlgo[F[_]: Applicative: Monad](portfolioQty: Long): F[Algo[F]] =
     Algo(
       ulId,
       lotSize,
-      100L,
+      portfolioQty,
       preProcess = preProcess[F],
       sendOrder = sendOrderAction,
       logAlert = log.warn,
@@ -263,7 +263,7 @@ trait Agent extends NativeTradingAgent {
       algo = None
 
     case "Pre-Open1" =>
-      algo = Some(initAlgo[Id])
+      algo = Some(initAlgo[Id](getPortfolioQty(ulId).getOrElse(0.0).toLong))
 
     case "Open1" =>
       algo = None
@@ -272,13 +272,13 @@ trait Agent extends NativeTradingAgent {
       algo = None
 
     case "Pre-Open2" =>
-      algo = Some(initAlgo[Id])
+      algo = Some(initAlgo[Id](getPortfolioQty(ulId).getOrElse(0.0).toLong))
 
     case "Open2" =>
       algo = None
 
     case "Pre-close" =>
-      algo = Some(initAlgo[Id])
+      algo = Some(initAlgo[Id](getPortfolioQty(ulId).getOrElse(0.0).toLong))
 
     case "OffHour" =>
       algo = None
@@ -300,7 +300,6 @@ trait Agent extends NativeTradingAgent {
 
     case _ =>
       algo = None
-
   }
 
   // This is the main function
