@@ -29,6 +29,7 @@ trait Agent extends NativeTradingAgent {
   val hedgeInstrument: InstrumentDescriptor //PTT@XBKK ?? Nop will find a way // String => SET-EMAPI-HMM-PROXY|ADVANC@XBKK
   val dictionaryService: IDictionaryProvider
   val ulId: String = ulInstrument.getUniqueId
+  val context      = "DEFAULT"
   val lotSize: Int = 100
 
   var algo: Option[Algo[Id]] = None
@@ -55,9 +56,6 @@ trait Agent extends NativeTradingAgent {
 
   def getProjectedPrice(inDe: InstrumentDescriptor): Option[Double] =
     source[Summary].get(inDe).latest.flatMap(_.theoOpenPrice)
-
-  def getProjectedVolume(inDe: InstrumentDescriptor): Option[Long] =
-    source[Summary].get(inDe).latest.flatMap(_.theoOpenVolume)
 
   def getOwnBestBidPrice(inDe: InstrumentDescriptor): Option[Double] =
     source[Summary].get(inDe).latest.flatMap(_.buyPrice)
@@ -203,14 +201,22 @@ trait Agent extends NativeTradingAgent {
 
   def preProcess[F[_]: Monad]: EitherT[F, Error, Order] =
     for {
-      dwList               <- EitherT.rightT[F, guardian.Error](getDwList(dictionaryService, ulId))
+      dwList <- EitherT.rightT[F, guardian.Error](getDwList(dictionaryService, ulId))
+      _ = log.warn(s"1. $dwList")
       dwProjectedPriceList <- EitherT.rightT[F, guardian.Error](dwList.map(getProjectedPrice))
-      bestBidPriceList     <- EitherT.rightT[F, guardian.Error](dwList.map(getOwnBestBidPrice))
-      bestAskPriceList     <- EitherT.rightT[F, guardian.Error](dwList.map(getOwnBestAskPrice))
-      deltaList            <- EitherT.rightT[F, guardian.Error](dwList.map(p => getDelta(p.getUniqueId)))
-      dwPutCallList        <- EitherT.rightT[F, guardian.Error](dwList.map(getPutOrCall))
-      pointValue           <- EitherT.rightT[F, guardian.Error](getPointValue(hedgeInstrument))
-      absoluteResidual     <- EitherT.rightT[F, guardian.Error](getAbsoluteResidual(pointValue, ulId))
+      _ = log.warn(s"2. $dwProjectedPriceList")
+      bestBidPriceList <- EitherT.rightT[F, guardian.Error](dwList.map(getOwnBestBidPrice))
+      _ = log.warn(s"3. $bestBidPriceList")
+      bestAskPriceList <- EitherT.rightT[F, guardian.Error](dwList.map(getOwnBestAskPrice))
+      _ = log.warn(s"4. $bestAskPriceList")
+      deltaList <- EitherT.rightT[F, guardian.Error](dwList.map(p => getDelta(p.getUniqueId)))
+      _ = log.warn(s"5. $deltaList")
+      dwPutCallList <- EitherT.rightT[F, guardian.Error](dwList.map(getPutOrCall))
+      _ = log.warn(s"6. $dwPutCallList")
+      pointValue <- EitherT.rightT[F, guardian.Error](getPointValue(hedgeInstrument))
+      _ = log.warn(s"7. $pointValue")
+      absoluteResidual <- EitherT.rightT[F, guardian.Error](getAbsoluteResidual(pointValue, ulId))
+      _ = log.warn(s"8. $absoluteResidual")
       signedDeltaList <- EitherT.rightT[F, guardian.Error](
         (deltaList, dwPutCallList).zipped.toList
           .map {
@@ -219,6 +225,7 @@ trait Agent extends NativeTradingAgent {
             case _                         => 0
           }
       )
+      _ = log.warn(s"9. $signedDeltaList")
       partialResidual <- EitherT.rightT[F, guardian.Error](
         (bestBidPriceList, bestAskPriceList, dwProjectedPriceList).zipped.toList
           .zip(signedDeltaList)
@@ -233,12 +240,19 @@ trait Agent extends NativeTradingAgent {
           .map(p => calcUlQtyPreResidual(p._1, p._2, p._3, p._4, p._5))
           .sum
       )
+      _             = log.warn(s"10. $partialResidual")
       totalResidual = partialResidual + absoluteResidual.getOrElse(BigDecimal("0")).toLong
+      _             = log.warn(s"11. $totalResidual")
       direction     = if (totalResidual < 0) Direction.SELL else Direction.BUY
+      _             = log.warn(s"12. $direction")
       hzDirection   = if (direction == Direction.SELL) BuySell.SELL else BuySell.BUY
+      _             = log.warn(s"13. $hzDirection")
       ulProjectedPrice <- EitherT.fromEither(getUlProjectedPrice(ulInstrument, direction))
+      _                = log.warn(s"14. $ulProjectedPrice")
       absTotalResidual = Math.abs(totalResidual)
+      _                = log.warn(s"15. $absTotalResidual")
       order            = Algo.createOrder(absTotalResidual, ulProjectedPrice.toDouble, hzDirection, CustomId.generate)
+      _                = log.warn(s"16. $order")
       _ <- EitherT.fromEither(validatePositiveAmount(order))
     } yield order
 
@@ -266,9 +280,20 @@ trait Agent extends NativeTradingAgent {
     case Load =>
       log.info("Agent Loading")
 
-      source[Summary]
-        .get(ulInstrument)
+      val sourceSummary = source[Summary].get(ulInstrument)
+
+      sourceSummary
+        .filter(p =>
+          p.theoOpenPrice.isDefined || p.theoOpenVolume.isDefined || p.buyPrice.isDefined || p.buyQty.isDefined || p.sellPrice.isDefined || p.sellQty.isDefined
+            || p.last.isDefined || p.closePrevious.isDefined
+        )
         .onUpdate(_ => algo.map(_.handleOnSignal()))
+
+      source[RiskPositionDetailsContainer].get(portfolioId, ulId, true).onUpdate(_ => algo.map(_.handleOnSignal()))
+
+      getDwList(dictionaryService, ulId)
+        .map(p => source[AutomatonStatus].get("SET-EMAPI-HMM-PROXY", context, p.getUniqueId, "REFERENCE"))
+        .foreach(_.onUpdate(_ => algo.map(_.handleOnSignal())))
 
       source[Summary].get(ulInstrument).map(_.modeStr.get) onUpdate {
         case "Startup" =>
