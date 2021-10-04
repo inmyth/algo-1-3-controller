@@ -13,16 +13,7 @@ import com.hsoft.hmm.api.source.pricing.{Pricing, PricingSourceBuilder}
 import com.hsoft.hmm.posman.api.position.container.{RiskPositionByULContainer, RiskPositionDetailsContainer}
 import com.ingalys.imc.order.Order
 import com.ingalys.imc.summary.Summary
-
-//import guardian.Algo.xxx2
-import guardian.{
-  Algo,
-  Error,
-  LiveOrdersInMemInterpreter,
-  PendingCalculationInMemInterpreter,
-  PendingOrdersInMemInterpreter,
-  UnderlyingPortfolioInterpreter
-}
+import guardian.{Algo, Error}
 import guardian.Entities.PutCall.{CALL, PUT}
 import guardian.Entities.{CustomId, Direction, OrderAction, PutCall}
 import horizontrader.plugins.hmm.connections.service.IDictionaryProvider
@@ -44,13 +35,18 @@ trait Agent extends NativeTradingAgent {
 
   import algotrader.api.source.summary._
 
-  def getDwList(ds: IDictionaryProvider, ulId: String, exchangeName: String = "SET"): List[InstrumentDescriptor] =
+  def getDwList(
+      ds: IDictionaryProvider,
+      ulId: String,
+      exchangeName: String = "SET-EMAPI-HMM-PROXY"
+  ): List[InstrumentDescriptor] =
     ds.getDictionary
       .getProducts(null)
       .values()
       .asScala
+      .filter(d => d.getProductType == ProductTypes.WARRANT)
       .map(p => p.asInstanceOf[Derivative])
-      .filter(d => d.getUlId == ulId && d.getProductType == ProductTypes.WARRANT)
+      .filter(d => d.getUlId == ulId)
       .map(p =>
         getService[InstrumentInfoService]
           .getInstrumentByUniqueId(exchangeName, p.getId)
@@ -258,53 +254,6 @@ trait Agent extends NativeTradingAgent {
       logError = log.error
     )
 
-  source[Summary].get(ulInstrument).map(_.modeStr.get) onUpdate {
-    case "Startup" =>
-      algo = None
-
-    case "Pre-Open1" =>
-      algo = Some(initAlgo[Id](getPortfolioQty(ulId).getOrElse(0.0).toLong))
-
-    case "Open1" =>
-      algo = None
-
-    case "Intermission" =>
-      algo = None
-
-    case "Pre-Open2" =>
-      algo = Some(initAlgo[Id](getPortfolioQty(ulId).getOrElse(0.0).toLong))
-
-    case "Open2" =>
-      algo = None
-
-    case "Pre-close" =>
-      algo = Some(initAlgo[Id](getPortfolioQty(ulId).getOrElse(0.0).toLong))
-
-    case "OffHour" =>
-      algo = None
-
-    case "Closed" =>
-      algo = None
-
-    case "Closed2" =>
-      algo = None
-
-    case "AfterMarket" =>
-      algo = None
-
-    case "CIRCUIT_BREAKER" =>
-      algo = None
-
-    case "Pre-OpenTemp" =>
-      algo = None
-
-    case _ =>
-      algo = None
-  }
-
-  // This is the main function
-  source[Summary].get(ulInstrument).onUpdate(_ => algo.map(_.handleOnSignal()))
-
   onOrder {
     case Nak(t) =>
       algo.map(_.handleOnOrderNak(CustomId.fromOrder(t.getOrderCopy), "Nak signal / order rejected"))
@@ -314,7 +263,53 @@ trait Agent extends NativeTradingAgent {
   }
 
   onMessage {
-    case Load  => log.info("Agent Loading")
+    case Load =>
+      log.info("Agent Loading")
+
+      source[Summary]
+        .get(ulInstrument)
+        .onUpdate(_ => algo.map(_.handleOnSignal()))
+
+      source[Summary].get(ulInstrument).map(_.modeStr.get) onUpdate {
+        case "Startup" =>
+          algo = None
+
+        case "Pre-Open1" =>
+          algo = Some(initAlgo[Id](getPortfolioQty(ulId).getOrElse(0.0).toLong))
+
+        case "Open1" =>
+        case "Intermission" =>
+          algo = None
+
+        case "Pre-Open2" =>
+          algo = Some(initAlgo[Id](getPortfolioQty(ulId).getOrElse(0.0).toLong))
+
+        case "Open2" =>
+        case "Pre-close" =>
+          algo = Some(initAlgo[Id](getPortfolioQty(ulId).getOrElse(0.0).toLong))
+
+        case "OffHour" =>
+          algo = None
+
+        case "Closed" =>
+          algo = None
+
+        case "Closed2" =>
+          algo = None
+
+        case "AfterMarket" =>
+          algo = None
+
+        case "CIRCUIT_BREAKER" =>
+          algo = None
+
+        case "Pre-OpenTemp" =>
+          algo = None
+
+        case _ =>
+          algo = None
+      }
+
     case Start => log.info("Agent starting")
   }
 }
