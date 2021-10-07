@@ -40,7 +40,7 @@ trait Agent extends NativeTradingAgent {
   var algo: Option[Algo[Id]]               = None
   var ulProjectedPrice: Option[Double]     = None
   var dwMap: Map[String, DW]               = Map.empty
-  var absoluteResidual: Option[BigDecimal] = None
+  var absoluteResidual: Option[BigDecimal] = Some(BigDecimal("0"))
   var pointValue: Option[Double]           = None
   var portfolioQty: Option[Long]           = None
 
@@ -57,51 +57,58 @@ trait Agent extends NativeTradingAgent {
     )
 
   def calcUlQtyPreResidual(
-      buyStatuses: Seq[ScenarioStatus],
-      sellStatuses: Seq[ScenarioStatus],
-      ownBestBid: Double,
-      ownBestAsk: Double,
-      marketProjectedPrice: Double,
-      signedDelta: Double,
-      context: String = "DEFAULT"
+      buyStatusesDefault: Seq[ScenarioStatus],
+      sellStatusesDefault: Seq[ScenarioStatus],
+      buyStatusesDynamic: Seq[ScenarioStatus],
+      sellStatusesDynamic: Seq[ScenarioStatus],
+      dwMarketProjectedPrice: Double,
+      signedDelta: Double
   ): Long = {
-    val bdProjectedPrice = BigDecimal(marketProjectedPrice).setScale(2, RoundingMode.HALF_EVEN)
-    val bdOwnBestBid     = BigDecimal(ownBestBid).setScale(2, RoundingMode.HALF_EVEN)
-    val bdOwnBestAsk     = BigDecimal(ownBestAsk).setScale(2, RoundingMode.HALF_EVEN)
+    val bdOwnBestBidDefault = BigDecimal(
+      buyStatusesDefault.sortWith(_.priceOnMarket < _.priceOnMarket).lastOption.map(_.priceOnMarket).getOrElse(0.0)
+    ).setScale(2, RoundingMode.HALF_EVEN)
+    val bdOwnBestAskDefault = BigDecimal(
+      sellStatusesDefault
+        .sortWith(_.priceOnMarket < _.priceOnMarket)
+        .headOption
+        .map(_.priceOnMarket)
+        .getOrElse(Int.MaxValue.toDouble)
+    ).setScale(2, RoundingMode.HALF_EVEN)
+    val bdOwnBestBidDynamic = BigDecimal(
+      buyStatusesDynamic.sortWith(_.priceOnMarket < _.priceOnMarket).lastOption.map(_.priceOnMarket).getOrElse(0.0)
+    ).setScale(2, RoundingMode.HALF_EVEN)
+    val bdOwnBestAskDynamic = BigDecimal(
+      sellStatusesDynamic
+        .sortWith(_.priceOnMarket < _.priceOnMarket)
+        .headOption
+        .map(_.priceOnMarket)
+        .getOrElse(Int.MaxValue.toDouble)
+    ).setScale(2, RoundingMode.HALF_EVEN)
 
-    val qty: Long = if (bdProjectedPrice <= bdOwnBestBid) {
-      context match {
-        case "DEFAULT" =>
-          buyStatuses
-            .filter(p => {
-              val v = BigDecimal(p.priceOnMarket).setScale(2, RoundingMode.HALF_EVEN)
-              bdProjectedPrice <= v && v <= bdOwnBestBid
-            })
-            .map(_.qtyOnMarketL)
-            .sum
-        case "DYNAMIC" =>
-          val p = buyStatuses(0)
-          val v = BigDecimal(p.priceOnMarket).setScale(2, RoundingMode.HALF_EVEN)
-          if (bdProjectedPrice <= v && v <= bdOwnBestBid) p.qtyOnMarketL else 0L
+    val qty: Long = {
+      val (bdOwnBestBid, buyStatusList) = if (bdOwnBestBidDefault <= bdOwnBestBidDynamic) {
+        (bdOwnBestBidDynamic, buyStatusesDynamic)
+      } else {
+        (bdOwnBestBidDefault, buyStatusesDefault)
       }
-    } else if (bdProjectedPrice >= bdOwnBestAsk) {
-      context match {
-        case "DEFAULT" =>
-          sellStatuses
-            .filter(p => {
-              val v = BigDecimal(p.priceOnMarket).setScale(2, RoundingMode.HALF_EVEN)
-              bdProjectedPrice >= v && v >= bdOwnBestAsk
-            })
-            .map(_.qtyOnMarketL)
-            .sum * -1
-        case "DYNAMIC" =>
-          val p = sellStatuses.head
-          val v = BigDecimal(p.priceOnMarket).setScale(2, RoundingMode.HALF_EVEN)
-          if (bdProjectedPrice >= v && v >= bdOwnBestAsk) p.qtyOnMarketL * -1 else 0L
-        case _ => 0L
+      val (bdOwnAskBid, sellStatusList) = if (bdOwnBestAskDefault <= bdOwnBestAskDynamic) {
+        (bdOwnBestAskDefault, sellStatusesDefault)
+      } else {
+        (bdOwnBestAskDynamic, sellStatusesDynamic)
       }
-    } else {
-      0L // own orders are not matched
+      val sumMktVolBid = buyStatusList
+        .filter(p => {
+          p.priceOnMarket > bdOwnBestBid || p.priceOnMarket == 0.0
+        })
+        .map(_.qtyOnMarketL)
+        .sum
+      val sumMktVolAsk = sellStatusList
+        .filter(p => {
+          p.priceOnMarket < bdOwnAskBid || p.priceOnMarket == 0.0
+        })
+        .map(_.qtyOnMarketL)
+        .sum
+      sumMktVolBid - sumMktVolAsk
     }
     // CALL dw buy, order is positive , delta is positive, buy dw-> sell ul
     // PUT dw, buy, order is positive, delta is negative, buy dw -> buy ul
@@ -126,7 +133,7 @@ trait Agent extends NativeTradingAgent {
     Algo.getPriceAfterTicks(if (direction == Direction.BUY) true else false, BigDecimal(price))
 
   def validatePositiveAmount(order: Order): Either[Error, Unit] =
-    Either.cond(order.getQuantityL > 0, (), Error.StateError("Pre-process order qty cannot be negative"))
+    Either.cond(order.getQuantityL >= 0, (), Error.StateError("Pre-process order qty cannot be negative"))
 
   def sendOrderAction(act: OrderAction): Order =
     act match {
@@ -177,13 +184,12 @@ trait Agent extends NativeTradingAgent {
         dwSignDeltaList
           .map(p =>
             calcUlQtyPreResidual(
-              buyStatuses = p.buyStatuses,
-              sellStatuses = p.sellStatuses,
-              ownBestBid = p.bestBidPrice.getOrElse(0.0),
-              ownBestAsk = p.bestAskPrice.getOrElse(Int.MaxValue.toDouble),
-              marketProjectedPrice = p.projectedPrice.get,
-              signedDelta = p.delta.get,
-              context = context
+              buyStatusesDefault = p.buyStatusesDefault,
+              sellStatusesDefault = p.sellStatusesDefault,
+              buyStatusesDynamic = p.buyStatusesDynamic,
+              sellStatusesDynamic = p.sellStatusesDynamic,
+              dwMarketProjectedPrice = p.projectedPrice.get,
+              signedDelta = p.delta.get
             )
           )
           .sum
@@ -213,13 +219,13 @@ trait Agent extends NativeTradingAgent {
 
   case class DW(
       uniqueId: String,
-      projectedPrice: Option[Double] = None,
-      bestBidPrice: Option[Double] = None,
-      bestAskPrice: Option[Double] = None,
-      delta: Option[Double] = None,
-      putCall: Option[PutCall] = None,
-      sellStatuses: Seq[ScenarioStatus] = Seq.empty,
-      buyStatuses: Seq[ScenarioStatus] = Seq.empty
+      projectedPrice: Option[Double] = None, // important
+      delta: Option[Double] = None,          // important
+      putCall: Option[PutCall] = None,       // important
+      sellStatusesDefault: Seq[ScenarioStatus] = Seq.empty,
+      buyStatusesDefault: Seq[ScenarioStatus] = Seq.empty,
+      sellStatusesDynamic: Seq[ScenarioStatus] = Seq.empty,
+      buyStatusesDynamic: Seq[ScenarioStatus] = Seq.empty
   )
 
   onMessage {
@@ -230,6 +236,7 @@ trait Agent extends NativeTradingAgent {
       val sSummary = source[Summary]
 
       pointValue = Option(hedgeInstrument.getPointValue).map(_.doubleValue())
+      ulProjectedPrice = Some(19.0)
 
       source[Summary]
         .get(ulInstrument)
@@ -294,26 +301,6 @@ trait Agent extends NativeTradingAgent {
               algo.map(_.handleOnSignal())
               log.info(s"DW ProjPx= ${dwInstrument.getUniqueId} ${s.theoOpenPrice}")
             })
-          sSummary
-            .get(dwInstrument)
-            .filter(s => s.buyPrice.isDefined)
-            .onUpdate(s => {
-              val x =
-                dwMap.getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId)).copy(bestBidPrice = s.buyPrice)
-              dwMap += (x.uniqueId -> x)
-              algo.map(_.handleOnSignal())
-              log.info(s"DW ProjPx= ${dwInstrument.getUniqueId} ${s.buyPrice}")
-            })
-          sSummary
-            .get(dwInstrument)
-            .filter(s => s.sellPrice.isDefined)
-            .onUpdate(s => {
-              val x =
-                dwMap.getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId)).copy(bestAskPrice = s.sellPrice)
-              dwMap += (x.uniqueId -> x)
-              algo.map(_.handleOnSignal())
-              log.info(s"DW ProjPx= ${dwInstrument.getUniqueId} ${s.sellPrice}")
-            })
           source[Pricing]
             .get(dwInstrument.getUniqueId, "DEFAULT")
             .filter(s => Option(s.delta).isDefined)
@@ -324,20 +311,38 @@ trait Agent extends NativeTradingAgent {
               algo.map(_.handleOnSignal())
             })
           source[AutomatonStatus]
-            .get(exchange, context, dwInstrument.getUniqueId, "REFERENCE")
+            .get(exchange, "DEFAULT", dwInstrument.getUniqueId, "REFERENCE")
             .onUpdate(s => {
               val x = dwMap
                 .getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId))
-                .copy(buyStatuses = s.buyStatuses.toList)
+                .copy(buyStatusesDefault = s.buyStatuses.filter(p => p.scenarioStatus == 65535).toList)
               dwMap += (x.uniqueId -> x)
               algo.map(_.handleOnSignal())
             })
           source[AutomatonStatus]
-            .get(exchange, context, dwInstrument.getUniqueId, "REFERENCE")
+            .get(exchange, "DEFAULT", dwInstrument.getUniqueId, "REFERENCE")
             .onUpdate(s => {
               val x = dwMap
                 .getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId))
-                .copy(sellStatuses = s.sellStatuses.toList)
+                .copy(sellStatusesDefault = s.sellStatuses.filter(p => p.scenarioStatus == 65535).toList)
+              dwMap += (x.uniqueId -> x)
+              algo.map(_.handleOnSignal())
+            })
+          source[AutomatonStatus]
+            .get(exchange, "DYNAMIC", dwInstrument.getUniqueId, "REFERENCE")
+            .onUpdate(s => {
+              val x = dwMap
+                .getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId))
+                .copy(buyStatusesDynamic = s.buyStatuses.filter(p => p.scenarioStatus == 65535).toList)
+              dwMap += (x.uniqueId -> x)
+              algo.map(_.handleOnSignal())
+            })
+          source[AutomatonStatus]
+            .get(exchange, "DYNAMIC", dwInstrument.getUniqueId, "REFERENCE")
+            .onUpdate(s => {
+              val x = dwMap
+                .getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId))
+                .copy(sellStatusesDynamic = s.sellStatuses.filter(p => p.scenarioStatus == 65535).toList)
               dwMap += (x.uniqueId -> x)
               algo.map(_.handleOnSignal())
             })
