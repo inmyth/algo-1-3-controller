@@ -27,6 +27,7 @@ import horizontrader.services.instruments.InstrumentInfoService
 import scala.collection.JavaConverters._
 import scala.language.higherKinds
 import scala.math.BigDecimal.RoundingMode
+import scala.util.Try
 
 trait Agent extends NativeTradingAgent {
   val portfolioId: String
@@ -84,7 +85,7 @@ trait Agent extends NativeTradingAgent {
           if (bdProjectedPrice <= v && v <= bdOwnBestBid) p.qtyOnMarketL else 0L
       }
     } else if (bdProjectedPrice >= bdOwnBestAsk) {
-      -1 * context match {
+      context match {
         case "DEFAULT" =>
           sellStatuses
             .filter(p => {
@@ -92,11 +93,11 @@ trait Agent extends NativeTradingAgent {
               bdProjectedPrice >= v && v >= bdOwnBestAsk
             })
             .map(_.qtyOnMarketL)
-            .sum
+            .sum * -1
         case "DYNAMIC" =>
-          val p = sellStatuses(0)
+          val p = sellStatuses.head
           val v = BigDecimal(p.priceOnMarket).setScale(2, RoundingMode.HALF_EVEN)
-          if (bdProjectedPrice >= v && v >= bdOwnBestAsk) p.qtyOnMarketL else 0L
+          if (bdProjectedPrice >= v && v >= bdOwnBestAsk) p.qtyOnMarketL * -1 else 0L
         case _ => 0L
       }
     } else {
@@ -230,7 +231,7 @@ trait Agent extends NativeTradingAgent {
 
       pointValue = Option(hedgeInstrument.getPointValue).map(_.doubleValue())
 
-      sSummary
+      source[Summary]
         .get(ulInstrument)
         .filter(s => s.theoOpenPrice.isDefined)
         .onUpdate(s => {
@@ -241,7 +242,7 @@ trait Agent extends NativeTradingAgent {
 
       source[RiskPositionDetailsContainer]
         .get(portfolioId, ulInstrument.getUniqueId, true)
-        .filter(p => Option(p.getTotalPosition).isDefined)
+        .filter(p => Option(p.getTotalPosition).isDefined && Option(p.getTotalPosition.getNetQty).isDefined)
         .onUpdate(p => {
           portfolioQty = Some(p.getTotalPosition.getNetQty.toLong)
 
@@ -251,11 +252,18 @@ trait Agent extends NativeTradingAgent {
 
       source[RiskPositionDetailsContainer]
         .get(portfolioId, ulInstrument.getUniqueId, true)
-        .filter(p => Option(p.getTotalPosition).isDefined)
+        .filter(p =>
+          Option(p.getTotalPosition).isDefined && Option(
+            p.getTotalPosition.getDeltaCashUlCurr
+          ).isDefined && Option(
+            p.getTotalPosition.getUlSpot
+          ).isDefined
+        )
         .onUpdate(p => {
-          if (pointValue.isDefined)
+          if (pointValue.isDefined && p.getTotalPosition.getUlSpot != 0.0 && pointValue.get != 0.0) {
             absoluteResidual =
               Some(BigDecimal(p.getTotalPosition.getDeltaCashUlCurr / p.getTotalPosition.getUlSpot / pointValue.get))
+          }
         })
 
       dictionaryService.getDictionary
