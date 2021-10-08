@@ -3,17 +3,14 @@ package mrt
 import horizontrader.services.instruments.InstrumentDescriptor
 import algotrader.api.{NativeTradingAgent, TrxMessages}
 import algotrader.api.Messages._
-import algotrader.api.source.Source
 import algotrader.api.source.summary._
 import com.ingalys.imc.BuySell
 import cats.{Applicative, Id, Monad}
 import cats.data.EitherT
 import com.hsoft.datamaster.product.{Derivative, ProductTypes}
-import com.hsoft.hmm.api.source.automatonstatus.{AutomatonStatus, AutomatonStatusSourceProvider}
-import com.hsoft.hmm.api.source.position.details.risk.RiskPositionDetailsSourceProvider
-import com.hsoft.hmm.api.source.position.ul.risk.RiskPositionByULSourceProvider
+import com.hsoft.hmm.api.source.automatonstatus.AutomatonStatus
 import com.hsoft.hmm.api.source.position.{RiskPositionByUlSourceBuilder, RiskPositionDetailsSourceBuilder}
-import com.hsoft.hmm.api.source.pricing.{Pricing, PricingSourceBuilder, PricingSourceProvider}
+import com.hsoft.hmm.api.source.pricing.{Pricing, PricingSourceBuilder}
 import com.hsoft.hmm.posman.api.position.container.{RiskPositionByULContainer, RiskPositionDetailsContainer}
 import com.hsoft.scenario.status.ScenarioStatus
 import com.ingalys.imc.order.Order
@@ -27,22 +24,21 @@ import horizontrader.services.instruments.InstrumentInfoService
 import scala.collection.JavaConverters._
 import scala.language.higherKinds
 import scala.math.BigDecimal.RoundingMode
-import scala.util.Try
 
 trait Agent extends NativeTradingAgent {
   val portfolioId: String
   val ulInstrument: InstrumentDescriptor
   val hedgeInstrument: InstrumentDescriptor
   val dictionaryService: IDictionaryProvider
-  val context                              = "DEFAULT"
-  val lotSize: Int                         = 100
-  val exchange                             = "SET-EMAPI-HMM-PROXY"
-  var algo: Option[Algo[Id]]               = None
-  var ulProjectedPrice: Option[Double]     = None
-  var dwMap: Map[String, DW]               = Map.empty
-  var absoluteResidual: Option[BigDecimal] = None
-  var pointValue: Option[Double]           = Some(1.0)
-  var portfolioQty: Option[Long]           = Some(0L)
+  val context                          = "DEFAULT"
+  val lotSize: Int                     = 100
+  val exchange                         = "SET-EMAPI-HMM-PROXY"
+  var algo: Option[Algo[Id]]           = None
+  var ulProjectedPrice: Option[Double] = None
+  var dwMap: Map[String, DW]           = Map.empty
+  var absoluteResidual: BigDecimal     = BigDecimal("0")
+  var pointValue: Double               = 1.0
+  var portfolioQty: Long               = 0L
 
   def initAlgo[F[_]: Applicative: Monad](ulId: String, portfolioQty: Long): F[Algo[F]] =
     Algo(
@@ -163,9 +159,6 @@ trait Agent extends NativeTradingAgent {
     for {
       _ <-
         EitherT.fromEither(Either.cond(ulProjectedPrice.isDefined, (), Error.MarketError("Underlying price is empty")))
-      _ <- EitherT.fromEither(Either.cond(pointValue.isDefined, (), Error.MarketError("Point value is empty")))
-      _ <-
-        EitherT.fromEither(Either.cond(absoluteResidual.isDefined, (), Error.MarketError("Absolute residual is empty")))
       dwList <- EitherT.rightT(dwMap.values.filter(p => {
         p.projectedPrice.isDefined && p.putCall.isDefined
       }))
@@ -193,14 +186,15 @@ trait Agent extends NativeTradingAgent {
           )
           .sum
       )
-      _             = log.warn(s"9. Prediction residual $predictionResidual")
-      _             = log.warn(s"10. Absolute residual $absoluteResidual")
-      totalResidual = predictionResidual + absoluteResidual.get.toLong
-      _             = log.warn(s"11. $totalResidual")
-      direction     = if (totalResidual < 0) Direction.SELL else Direction.BUY
-      _             = log.warn(s"12. $direction")
-      hzDirection   = if (direction == Direction.SELL) BuySell.SELL else BuySell.BUY
-      _             = log.warn(s"13. $hzDirection")
+      _                        = log.warn(s"9. Prediction residual $predictionResidual")
+      reversedAbsoluteResidual = absoluteResidual.toLong * -1
+      _                        = log.warn(s"10. Absolute residual $reversedAbsoluteResidual")
+      totalResidual            = predictionResidual + reversedAbsoluteResidual
+      _                        = log.warn(s"11. $totalResidual")
+      direction                = if (totalResidual < 0) Direction.SELL else Direction.BUY
+      _                        = log.warn(s"12. $direction")
+      hzDirection              = if (direction == Direction.SELL) BuySell.SELL else BuySell.BUY
+      _                        = log.warn(s"13. $hzDirection")
       ulShiftedProjectedPrice <- EitherT.rightT[F, Error](shiftUlProjectedPrice(ulProjectedPrice.get, direction))
       _                = log.warn(s"15. $ulShiftedProjectedPrice")
       absTotalResidual = Math.abs(totalResidual)
@@ -212,20 +206,23 @@ trait Agent extends NativeTradingAgent {
 
   onOrder {
     case Nak(t) =>
-      algo.map(_.handleOnOrderNak(CustomId.fromOrder(t.getOrderCopy), "Nak signal / order rejected", preProcess))
+      val hzOrder = t.getOrderCopy
+      algo.map(_.handleOnOrderNak(hzOrder, CustomId.fromOrder(hzOrder), "Nak signal / order rejected", preProcess))
 
     case Ack(t) =>
-      algo.map(_.handleOnOrderAck(CustomId.fromOrder(t.getOrderCopy), preProcess))
+      val hzOrder = t.getOrderCopy
+      algo.map(_.handleOnOrderAck(hzOrder, CustomId.fromOrder(hzOrder), preProcess))
 
     case TrxMessages.Rejected(t) =>
-      algo.map(_.handleOnOrderNak(CustomId.fromOrder(t.getOrderCopy), "Nak signal / order rejected", preProcess))
+      val hzOrder = t.getOrderCopy
+      algo.map(_.handleOnOrderNak(hzOrder, CustomId.fromOrder(hzOrder), "Nak signal / order rejected", preProcess))
   }
 
   case class DW(
       uniqueId: String,
-      projectedPrice: Option[Double] = None, // important
-      delta: Option[Double] = None,          // important
-      putCall: Option[PutCall] = None,       // important
+      projectedPrice: Option[Double] = None,
+      delta: Option[Double] = None,
+      putCall: Option[PutCall] = None,
       sellStatusesDefault: Seq[ScenarioStatus] = Seq.empty,
       buyStatusesDefault: Seq[ScenarioStatus] = Seq.empty,
       sellStatusesDynamic: Seq[ScenarioStatus] = Seq.empty,
@@ -238,54 +235,52 @@ trait Agent extends NativeTradingAgent {
       log.info("Agent Loading")
       val ulId     = ulInstrument.getUniqueId
       val sSummary = source[Summary]
-
-      pointValue = Option(hedgeInstrument.getPointValue).map(_.doubleValue()).orElse(Some(1.0))
-      algo = Some(initAlgo[Id](ulId, portfolioQty.get))
-
+      pointValue = Option(hedgeInstrument.getPointValue).map(_.doubleValue()).getOrElse(1.0)
+      algo = Some(initAlgo[Id](ulId, portfolioQty))
       // UL Projected Price
       source[Summary]
         .get(ulInstrument)
-        .filter(s => s.theoOpenPrice.isDefined)
+        .filter(s => {
+          s.theoOpenPrice.isDefined
+        })
         .onUpdate(s => {
           ulProjectedPrice = s.theoOpenPrice
           algo.map(_.handleOnSignal(preProcess))
-          log.info(s"ProjPx= " + s.theoOpenPrice.get)
         })
-
       source[Summary]
         .get(ulInstrument)
         .filter(s => s.last.isDefined)
         .onUpdate(s => {
           ulProjectedPrice = if (ulProjectedPrice.isEmpty) s.last else ulProjectedPrice
           algo.map(_.handleOnSignal(preProcess))
-          log.info(s"ProjPx= " + s.theoOpenPrice.get)
         })
-
       source[Summary]
         .get(ulInstrument)
         .filter(s => s.closePrevious.isDefined)
         .onUpdate(s => {
           ulProjectedPrice = if (ulProjectedPrice.isEmpty) s.closePrevious else ulProjectedPrice
           algo.map(_.handleOnSignal(preProcess))
-          log.info(s"ProjPx= " + s.theoOpenPrice.get)
         })
-
       // Portfolio qty
       source[RiskPositionDetailsContainer]
         .get(portfolioId, ulInstrument.getUniqueId, true)
-        .filter(p => Option(p.getTotalPosition).isDefined && Option(p.getTotalPosition.getNetQty).isDefined)
+        .filter(p =>
+          Option(p).isDefined && Option(p.getTotalPosition).isDefined && Option(p.getTotalPosition.getNetQty).isDefined
+        )
         .onUpdate(p => {
-          portfolioQty = Some(p.getTotalPosition.getNetQty.toLong)
           log.info(s"Portfolio qty= " + portfolioQty)
+          portfolioQty = p.getTotalPosition.getNetQty.toLong
           algo.map(_.handleOnSignal(preProcess))
         })
-
       // Absolute Residual
       source[RiskPositionByULContainer]
         .get(portfolioId, ulInstrument.getUniqueId, true)
         .onUpdate(p => {
           absoluteResidual =
-            Some(BigDecimal(p.getTotalPosition.getDeltaCashUlCurr / p.getTotalPosition.getUlSpot / pointValue.get))
+            if (p.getTotalPosition.getUlSpot == 0.0 || pointValue == 0.0) BigDecimal("0")
+            else {
+              BigDecimal(p.getTotalPosition.getDeltaCashUlCurr / p.getTotalPosition.getUlSpot / pointValue)
+            }
           log.info(s"Absolute residual= " + absoluteResidual)
           algo.map(_.handleOnSignal(preProcess))
         })
@@ -387,24 +382,18 @@ trait Agent extends NativeTradingAgent {
           algo = None
 
         case "Pre-Open1" =>
-//          algo = Some(initAlgo[Id](getPortfolioQty(sRiskPosition, ulId).getOrElse(0.0).toLong))
-
-        case "Open1" =>
+        case "Open1"     =>
         case "Intermission" =>
           algo = None
 
         case "Pre-Open2" =>
-//          algo = Some(initAlgo[Id](getPortfolioQty(sRiskPosition, ulId).getOrElse(0.0).toLong))
-
         case "Open2"     =>
         case "Pre-close" =>
-//          algo = Some(initAlgo[Id](getPortfolioQty(sRiskPosition, ulId).getOrElse(0.0).toLong))
-
         case "OffHour" =>
           algo = None
 
         case "Closed" =>
-          algo = None
+          algo.map(_.handleOnSignal(preProcess))
 
         case "Closed2" =>
           algo = None
