@@ -26,10 +26,11 @@ import scala.language.higherKinds
 import scala.math.BigDecimal.RoundingMode
 
 trait Agent extends NativeTradingAgent {
-  val portfolioId: String
-  val ulInstrument: InstrumentDescriptor
-  val hedgeInstrument: InstrumentDescriptor
-  val dictionaryService: IDictionaryProvider
+  val portfolioId: String                    //JV
+  val hedgePortfolio: String                 //9901150 Buy Sell UL
+  val ulInstrument: InstrumentDescriptor     //RBF@XBKK
+  val hedgeInstrument: InstrumentDescriptor  //RBF@XBKK
+  val dictionaryService: IDictionaryProvider // List of RBF@XBKK DW
   val context                          = "DEFAULT"
   val lotSize: Int                     = 100
   val exchange                         = "SET-EMAPI-HMM-PROXY"
@@ -125,12 +126,13 @@ trait Agent extends NativeTradingAgent {
     }
 
   def shiftUlProjectedPrice(price: Double, direction: Direction): BigDecimal =
-    Algo.getPriceAfterTicks(if (direction == Direction.BUY) true else false, BigDecimal(price))
+    Algo.getPriceAfterTicks(if (direction == Direction.BUY) true else false, BigDecimal(price), 5)
 
   def validatePositiveAmount(order: Order): Either[Error, Unit] =
     Either.cond(order.getQuantityL >= 0, (), Error.StateError("Pre-process order qty cannot be negative"))
 
-  def sendOrderAction(act: OrderAction): Order =
+  def sendOrderAction(act: OrderAction): Order = {
+    log.info(s"Send Order Action $act")
     act match {
       case OrderAction.InsertOrder(order) =>
         sendLimitOrder(
@@ -154,6 +156,7 @@ trait Agent extends NativeTradingAgent {
           order = order
         )
     }
+  }
 
   def preProcess[F[_]: Monad]: EitherT[F, Error, Order] =
     for {
@@ -229,6 +232,8 @@ trait Agent extends NativeTradingAgent {
       buyStatusesDynamic: Seq[ScenarioStatus] = Seq.empty
   )
 
+  val ulSpot = ulProjectedPrice
+
   onMessage {
 
     case Load =>
@@ -236,7 +241,8 @@ trait Agent extends NativeTradingAgent {
       val ulId     = ulInstrument.getUniqueId
       val sSummary = source[Summary]
       pointValue = Option(hedgeInstrument.getPointValue).map(_.doubleValue()).getOrElse(1.0)
-      algo = Some(initAlgo[Id](ulId, portfolioQty))
+      algo.map(_.handleOnSignal(preProcess))
+
       // UL Projected Price
       source[Summary]
         .get(ulInstrument)
@@ -245,6 +251,7 @@ trait Agent extends NativeTradingAgent {
         })
         .onUpdate(s => {
           ulProjectedPrice = s.theoOpenPrice
+          log.info(s"Theoopenprice price $ulProjectedPrice")
           algo.map(_.handleOnSignal(preProcess))
         })
       source[Summary]
@@ -252,24 +259,28 @@ trait Agent extends NativeTradingAgent {
         .filter(s => s.last.isDefined)
         .onUpdate(s => {
           ulProjectedPrice = if (ulProjectedPrice.isEmpty) s.last else ulProjectedPrice
+          log.info(s"Last price $ulProjectedPrice")
+
           algo.map(_.handleOnSignal(preProcess))
         })
       source[Summary]
         .get(ulInstrument)
         .filter(s => s.closePrevious.isDefined)
         .onUpdate(s => {
+          log.info(s"Close prev price $ulProjectedPrice")
           ulProjectedPrice = if (ulProjectedPrice.isEmpty) s.closePrevious else ulProjectedPrice
           algo.map(_.handleOnSignal(preProcess))
         })
       // Portfolio qty
       source[RiskPositionDetailsContainer]
-        .get(portfolioId, ulInstrument.getUniqueId, true)
+        .get(hedgePortfolio, ulInstrument.getUniqueId, true)
         .filter(p =>
           Option(p).isDefined && Option(p.getTotalPosition).isDefined && Option(p.getTotalPosition.getNetQty).isDefined
         )
         .onUpdate(p => {
           log.info(s"Portfolio qty= " + portfolioQty)
           portfolioQty = p.getTotalPosition.getNetQty.toLong
+          algo = Some(initAlgo[Id](ulId, portfolioQty)) // NEED PORTFOLIO QTY
           algo.map(_.handleOnSignal(preProcess))
         })
       // Absolute Residual
@@ -279,9 +290,9 @@ trait Agent extends NativeTradingAgent {
           absoluteResidual =
             if (p.getTotalPosition.getUlSpot == 0.0 || pointValue == 0.0) BigDecimal("0")
             else {
+              log.info(s"Abs deltacash ${p.getTotalPosition.getDeltaCashUlCurr}")
               BigDecimal(p.getTotalPosition.getDeltaCashUlCurr / p.getTotalPosition.getUlSpot / pointValue)
             }
-          log.info(s"Absolute residual= " + absoluteResidual)
           algo.map(_.handleOnSignal(preProcess))
         })
 
@@ -393,8 +404,6 @@ trait Agent extends NativeTradingAgent {
           algo = None
 
         case "Closed" =>
-          algo.map(_.handleOnSignal(preProcess))
-
         case "Closed2" =>
           algo = None
 
