@@ -209,7 +209,15 @@ trait Agent extends NativeTradingAgent {
       _ <- EitherT.rightT(log.info(s"Agent 4. Absolute residual: $reversedAbsoluteResidual"))
       totalResidual = predictionResidual + reversedAbsoluteResidual
       _ <- EitherT.rightT(log.info(s"Agent 5. Total residual: $totalResidual"))
-      direction = if (totalResidual < 0) Direction.SELL else Direction.BUY
+      direction <- EitherT.fromEither(
+        if (totalResidual == 0) {
+          Left(Error.MarketError("Agent e. Direction cannot be determined because total residual is zero"))
+        } else if (totalResidual < 0) {
+          Right(Direction.SELL)
+        } else {
+          Right(Direction.BUY)
+        }
+      )
       _ <- EitherT.rightT(log.info(s"Agent 6. Direction: $direction"))
       hzDirection = if (direction == Direction.SELL) BuySell.SELL else BuySell.BUY
       ulShiftedProjectedPrice <- EitherT.rightT[F, Error](shiftUlProjectedPrice(ulProjectedPrice.get, direction))
@@ -229,6 +237,7 @@ trait Agent extends NativeTradingAgent {
 
     case Ack(t) =>
       val hzOrder = t.getOrderCopy
+      log.info(s"Agent 2000. Got ack : $t")
       algo.map(_.handleOnOrderAck(hzOrder, CustomId.fromOrder(hzOrder), preProcess))
 
     case TrxMessages.Rejected(t) =>
@@ -272,7 +281,7 @@ trait Agent extends NativeTradingAgent {
         })
       source[Summary]
         .get(ulInstrument)
-        .filter(s => s.closePrevious.isDefined)
+        .filter(s => s.closePrevious.isDefined && s.last.isEmpty)
         .onUpdate(s => {
           log.info(s"Agent. ulProjectedPrice: Close previous $ulProjectedPrice")
           ulProjectedPrice = if (ulProjectedPrice.isEmpty) s.closePrevious else ulProjectedPrice
