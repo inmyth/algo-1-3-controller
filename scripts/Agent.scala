@@ -157,16 +157,11 @@ trait Agent extends NativeTradingAgent {
             o
           }
         )
-      case OrderAction.UpdateOrder(order) =>
-        updateOrder(
-          instrument = ulInstrument,
-          order = order
-        )
-      case OrderAction.CancelOrder(order) =>
-        deleteOrder(
-          instrument = ulInstrument,
-          order = order
-        )
+
+      case OrderAction.UpdateOrder(activeOrderDescriptorView, order) =>
+        updateOrderQuantity(activeOrderDescriptorView, order.getQuantityL)
+
+      case OrderAction.CancelOrder(activeOrderDescriptorView, order) => deleteOrder(activeOrderDescriptorView)
     }
   }
 
@@ -225,30 +220,41 @@ trait Agent extends NativeTradingAgent {
       absTotalResidual = Math.abs(totalResidual)
       _        <- EitherT.rightT(log.info(s"Agent 8. Total residual: $absTotalResidual"))
       customId <- EitherT.rightT(CustomId.generate)
-      order = Algo.createOrder(absTotalResidual, ulShiftedProjectedPrice.toDouble, hzDirection, customId)
+      order = Algo.createPreProcessOrder(absTotalResidual, ulShiftedProjectedPrice.toDouble, hzDirection, customId)
       _ <- EitherT.fromEither(validatePositiveAmount(order))
       _ <- EitherT.rightT(log.info(s"Agent 9. CustomId: $customId, Total residual order: $order"))
     } yield order
 
   onOrder {
-    case Nak(t) =>
-      val hzOrder = t.getOrderCopy
-      algo.map(_.handleOnOrderNak(CustomId.fromOrder(hzOrder), "Agent e. Nak signal / order rejected", preProcess))
+    case Nak(activeOrderDescriptorView) =>
+      val hzOrder = activeOrderDescriptorView.getOrderCopy
+      algo.map(
+        _.handleOnOrderNak(
+          CustomId.fromOrder(hzOrder),
+          s"Agent e. Nak signal / order rejected id: ${activeOrderDescriptorView.getOrderCopy.getId}, $activeOrderDescriptorView",
+          preProcess
+        )
+      )
 
-    case Ack(t) =>
-      val hzOrder = t.getOrderCopy
-      log.info(s"Agent 2000. Got ack : $t")
-      algo.map(_.handleOnOrderAck(hzOrder, CustomId.fromOrder(hzOrder), preProcess))
+    case Ack(activeOrderDescriptorView) =>
+      log.info(s"Agent 2000. Got ack id: ${activeOrderDescriptorView.getOrderCopy.getId}, $activeOrderDescriptorView")
+      algo.map(_.handleOnOrderAck(activeOrderDescriptorView, preProcess))
 
     case TrxMessages.Rejected(t) =>
       val hzOrder = t.getOrderCopy
       algo.map(
         _.handleOnOrderNak(
           CustomId.fromOrder(hzOrder),
-          "Agent e. Nak signal / order rejected (TrxMessages.Rejected)",
+          s"Agent e. Nak signal / order rejected (TrxMessages.Rejected): $t",
           preProcess
         )
       )
+
+    case Executed(_, activeOrderDescriptorView) =>
+      log.info(
+        s"Agent 2500. Got executed id: ${activeOrderDescriptorView.getOrderCopy.getId}, $activeOrderDescriptorView"
+      )
+      algo.map(_.handleOnOrderAck(activeOrderDescriptorView, preProcess))
   }
 
   onMessage {
