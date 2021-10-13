@@ -31,16 +31,17 @@ trait Agent extends NativeTradingAgent {
   val ulInstrument: InstrumentDescriptor     //RBF@XBKK
   val hedgeInstrument: InstrumentDescriptor  //RBF@XBKK
   val dictionaryService: IDictionaryProvider // List of RBF@XBKK DW
-  val context                          = "DEFAULT"
-  val lotSize: Int                     = 100
-  val exchange                         = "SET-EMAPI-HMM-PROXY"
-  var algo: Option[Algo[Id]]           = None
-  var ulProjectedPrice: Option[Double] = None
-  var dwMap: Map[String, DW]           = Map.empty
-  var absoluteResidual: BigDecimal     = BigDecimal("0")
-  var pointValue: Double               = 1.0
-  var portfolioQty: Long               = 0L
-  val ulSpot: Option[Double]           = ulProjectedPrice
+  val context                       = "DEFAULT"
+  val lotSize: Int                  = 100
+  val exchange                      = "SET-EMAPI-HMM-PROXY"
+  var algo: Option[Algo[Id]]        = None
+  var dwMap: Map[String, DW]        = Map.empty
+  var absoluteResidual: BigDecimal  = BigDecimal("0")
+  var pointValue: Double            = 1.0
+  var portfolioQty: Long            = 0L
+  var theoOpenPrice: Option[Double] = None
+  var lastPrice: Option[Double]     = None
+  var closePrevious: Option[Double] = None
 
   case class DW(
       uniqueId: String,
@@ -144,9 +145,9 @@ trait Agent extends NativeTradingAgent {
     Either.cond(order.getQuantityL >= 0, (), Error.StateError("Agent e. Pre-process order qty cannot be negative"))
 
   def sendOrderAction(act: OrderAction): Order = {
-    log.info(s"Agent 1000. Send Order $act")
     act match {
       case OrderAction.InsertOrder(order) =>
+        log.info(s"Agent 1000. Send Insert Order $act")
         sendLimitOrder(
           instrument = ulInstrument,
           way = order.getBuySell,
@@ -159,16 +160,24 @@ trait Agent extends NativeTradingAgent {
         )
 
       case OrderAction.UpdateOrder(activeOrderDescriptorView, order) =>
+        log.info(s"Agent 1000. Send Update Order new qty: ${order.getQuantityL} $activeOrderDescriptorView")
         updateOrderQuantity(activeOrderDescriptorView, order.getQuantityL)
 
-      case OrderAction.CancelOrder(activeOrderDescriptorView, order) => deleteOrder(activeOrderDescriptorView)
+      case OrderAction.CancelOrder(activeOrderDescriptorView, order) =>
+        log.info(s"Agent 1000. Send Cancel Order new qty: $activeOrderDescriptorView")
+        deleteOrder(activeOrderDescriptorView)
     }
   }
 
   def preProcess[F[_]: Monad]: EitherT[F, Error, Order] =
     for {
-      _ <- EitherT.fromEither(
-        Either.cond(ulProjectedPrice.isDefined, (), Error.MarketError("Agent e. Underlying price is empty"))
+      ulProjectedPrice <- EitherT.fromEither[F](
+        (theoOpenPrice, lastPrice, closePrevious) match {
+          case (Some(v), _, _)       => Right(v)
+          case (None, Some(v), _)    => Right(v)
+          case (None, None, Some(v)) => Right(v)
+          case _                     => Left(Error.MarketError("Agent e. Underlying price is empty"))
+        }
       )
       dwList <- EitherT.rightT(dwMap.values.filter(p => {
         p.projectedPrice.isDefined && p.putCall.isDefined
@@ -184,7 +193,7 @@ trait Agent extends NativeTradingAgent {
           p.copy(delta = Some(signedDelta))
         })
       )
-      _ <- EitherT.rightT(log.info(s"Agent 2. Dw List: $dwSignDeltaList"))
+      _ <- EitherT.rightT(log.info(s"Agent 2. Dw signed delta list: $dwSignDeltaList"))
       predictionResidual <- EitherT.rightT[F, guardian.Error](
         dwSignDeltaList
           .map(p =>
@@ -213,12 +222,10 @@ trait Agent extends NativeTradingAgent {
           Right(Direction.BUY)
         }
       )
-      _ <- EitherT.rightT(log.info(s"Agent 6. Direction: $direction"))
       hzDirection = if (direction == Direction.SELL) BuySell.SELL else BuySell.BUY
-      ulShiftedProjectedPrice <- EitherT.rightT[F, Error](shiftUlProjectedPrice(ulProjectedPrice.get, direction))
+      ulShiftedProjectedPrice <- EitherT.rightT[F, Error](shiftUlProjectedPrice(ulProjectedPrice, direction))
       _                       <- EitherT.rightT(log.info(s"Agent 7. Shifted price: $ulShiftedProjectedPrice from $ulProjectedPrice"))
       absTotalResidual = Math.abs(totalResidual)
-      _        <- EitherT.rightT(log.info(s"Agent 8. Total residual: $absTotalResidual"))
       customId <- EitherT.rightT(CustomId.generate)
       order = Algo.createPreProcessOrder(absTotalResidual, ulShiftedProjectedPrice.toDouble, hzDirection, customId)
       _ <- EitherT.fromEither(validatePositiveAmount(order))
@@ -237,7 +244,9 @@ trait Agent extends NativeTradingAgent {
       )
 
     case Ack(activeOrderDescriptorView) =>
-      log.info(s"Agent 2000. Got ack id: ${activeOrderDescriptorView.getOrderCopy.getId}, $activeOrderDescriptorView")
+      log.info(
+        s"Agent 2000. Got ack id: ${activeOrderDescriptorView.getOrderCopy.getId}, status: ${activeOrderDescriptorView.getExecutionStatus}, $activeOrderDescriptorView"
+      )
       algo.map(_.handleOnOrderAck(activeOrderDescriptorView, preProcess))
 
     case TrxMessages.Rejected(t) =>
@@ -252,7 +261,7 @@ trait Agent extends NativeTradingAgent {
 
     case Executed(_, activeOrderDescriptorView) =>
       log.info(
-        s"Agent 2500. Got executed id: ${activeOrderDescriptorView.getOrderCopy.getId}, $activeOrderDescriptorView"
+        s"Agent 2500. Got executed id: ${activeOrderDescriptorView.getOrderCopy.getId}, status: ${activeOrderDescriptorView.getExecutionStatus} $activeOrderDescriptorView"
       )
       algo.map(_.handleOnOrderAck(activeOrderDescriptorView, preProcess))
   }
@@ -273,24 +282,24 @@ trait Agent extends NativeTradingAgent {
           s.theoOpenPrice.isDefined
         })
         .onUpdate(s => {
-          ulProjectedPrice = s.theoOpenPrice
-          log.info(s"Agent. ulProjectedPrice: TheoOpenPrice price $ulProjectedPrice")
+          theoOpenPrice = s.theoOpenPrice
+          log.info(s"Agent. ulProjectedPrice: TheoOpenPrice price $theoOpenPrice")
           algo.map(_.handleOnSignal(preProcess))
         })
       source[Summary]
         .get(ulInstrument)
         .filter(s => s.last.isDefined)
         .onUpdate(s => {
-          ulProjectedPrice = if (ulProjectedPrice.isEmpty) s.last else ulProjectedPrice
-          log.info(s"Agent. ulProjectedPrice: Last price $ulProjectedPrice")
+          lastPrice = s.last
+          log.info(s"Agent. ulProjectedPrice: Last price $lastPrice")
           algo.map(_.handleOnSignal(preProcess))
         })
       source[Summary]
         .get(ulInstrument)
-        .filter(s => s.closePrevious.isDefined && s.last.isEmpty)
+        .filter(s => s.closePrevious.isDefined)
         .onUpdate(s => {
-          log.info(s"Agent. ulProjectedPrice: Close previous $ulProjectedPrice")
-          ulProjectedPrice = if (ulProjectedPrice.isEmpty) s.closePrevious else ulProjectedPrice
+          closePrevious = s.closePrevious
+          log.info(s"Agent. ulProjectedPrice: Close previous $closePrevious")
           algo.map(_.handleOnSignal(preProcess))
         })
       // Portfolio qty
