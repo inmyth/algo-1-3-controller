@@ -54,11 +54,10 @@ trait Agent extends NativeTradingAgent {
       buyStatusesDynamic: Seq[ScenarioStatus] = Seq.empty
   )
 
-  def initAlgo[F[_]: Applicative: Monad](ulId: String, portfolioQty: Long): F[Algo[F]] =
+  def initAlgo[F[_]: Applicative: Monad](ulId: String): Algo[F] =
     Algo(
-      ulId,
-      lotSize,
-      portfolioQty,
+      underlyingSymbol = ulId,
+      lotSize = lotSize,
       sendOrder = sendOrderAction,
       logAlert = log.warn,
       logInfo = log.info,
@@ -238,8 +237,7 @@ trait Agent extends NativeTradingAgent {
       algo.map(
         _.handleOnOrderNak(
           CustomId.fromOrder(hzOrder),
-          s"Agent e. Nak signal / order rejected id: ${activeOrderDescriptorView.getOrderCopy.getId}, $activeOrderDescriptorView",
-          preProcess
+          s"Agent e. Nak signal / order rejected id: ${activeOrderDescriptorView.getOrderCopy.getId}, $activeOrderDescriptorView"
         )
       )
 
@@ -254,8 +252,7 @@ trait Agent extends NativeTradingAgent {
       algo.map(
         _.handleOnOrderNak(
           CustomId.fromOrder(hzOrder),
-          s"Agent e. Nak signal / order rejected (TrxMessages.Rejected): $t",
-          preProcess
+          s"Agent e. Nak signal / order rejected (TrxMessages.Rejected): $t"
         )
       )
 
@@ -273,7 +270,7 @@ trait Agent extends NativeTradingAgent {
       val ulId     = ulInstrument.getUniqueId
       val sSummary = source[Summary]
       pointValue = Option(hedgeInstrument.getPointValue).map(_.doubleValue()).getOrElse(1.0)
-      algo.map(_.handleOnSignal(preProcess))
+      algo = if (algo.isEmpty) Some(initAlgo[Id](ulId)) else algo
 
       // UL Projected Price
       source[Summary]
@@ -311,7 +308,7 @@ trait Agent extends NativeTradingAgent {
         .onUpdate(p => {
           portfolioQty = p.getTotalPosition.getNetQty.toLong
           log.info(s"Agent. portfolioQty: $portfolioQty")
-          algo = if (algo.isEmpty) Some(initAlgo[Id](ulId, portfolioQty)) else algo
+          algo.map(_.handleOnPortfolio(portfolioQty))
           algo.map(_.handleOnSignal(preProcess))
         })
       // Absolute Residual
