@@ -43,15 +43,18 @@ trait Agent extends NativeTradingAgent {
   var lastPrice: Option[Double]     = None
   var closePrevious: Option[Double] = None
 
+  case class MyScenarioStatus(priceOnMarket: Double, qtyOnMarketL: Long)
+  val toMyScenarioStatus: ScenarioStatus => MyScenarioStatus = s => MyScenarioStatus(s.priceOnMarket, s.qtyOnMarketL)
+
   case class DW(
       uniqueId: String,
       projectedPrice: Option[Double] = None,
       delta: Option[Double] = None,
       putCall: Option[PutCall] = None,
-      sellStatusesDefault: Seq[ScenarioStatus] = Seq.empty,
-      buyStatusesDefault: Seq[ScenarioStatus] = Seq.empty,
-      sellStatusesDynamic: Seq[ScenarioStatus] = Seq.empty,
-      buyStatusesDynamic: Seq[ScenarioStatus] = Seq.empty
+      sellStatusesDefault: Seq[MyScenarioStatus] = Seq.empty,
+      buyStatusesDefault: Seq[MyScenarioStatus] = Seq.empty,
+      sellStatusesDynamic: Seq[MyScenarioStatus] = Seq.empty,
+      buyStatusesDynamic: Seq[MyScenarioStatus] = Seq.empty
   )
 
   def initAlgo[F[_]: Applicative: Monad](ulId: String): Algo[F] =
@@ -65,10 +68,10 @@ trait Agent extends NativeTradingAgent {
     )
 
   def predictResidual(
-      buyStatusesDefault: Seq[ScenarioStatus],
-      sellStatusesDefault: Seq[ScenarioStatus],
-      buyStatusesDynamic: Seq[ScenarioStatus],
-      sellStatusesDynamic: Seq[ScenarioStatus],
+      buyStatusesDefault: Seq[MyScenarioStatus],
+      sellStatusesDefault: Seq[MyScenarioStatus],
+      buyStatusesDynamic: Seq[MyScenarioStatus],
+      sellStatusesDynamic: Seq[MyScenarioStatus],
       dwMarketProjectedPrice: Double,
       signedDelta: Double
   ): Long = {
@@ -377,7 +380,9 @@ trait Agent extends NativeTradingAgent {
             .onUpdate(s => {
               val x = dwMap
                 .getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId))
-                .copy(buyStatusesDefault = if (s.buyStatuses(0).scenarioStatus == 65535) s.buyStatuses else List.empty)
+                .copy(buyStatusesDefault =
+                  if (s.buyStatuses(0).scenarioStatus == 65535) s.buyStatuses.map(toMyScenarioStatus) else List.empty
+                )
               dwMap += (x.uniqueId -> x)
               algo.map(_.handleOnSignal(preProcess))
             })
@@ -387,7 +392,7 @@ trait Agent extends NativeTradingAgent {
               val x = dwMap
                 .getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId))
                 .copy(sellStatusesDefault =
-                  if (s.sellStatuses(0).scenarioStatus == 65535) s.sellStatuses else List.empty
+                  if (s.sellStatuses(0).scenarioStatus == 65535) s.sellStatuses.map(toMyScenarioStatus) else List.empty
                 )
               dwMap += (x.uniqueId -> x)
               algo.map(_.handleOnSignal(preProcess))
@@ -398,7 +403,9 @@ trait Agent extends NativeTradingAgent {
             .onUpdate(s => {
               val x = dwMap
                 .getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId))
-                .copy(buyStatusesDynamic = if (s.buyStatuses(0).scenarioStatus == 65535) s.buyStatuses else List.empty)
+                .copy(buyStatusesDynamic =
+                  if (s.buyStatuses(0).scenarioStatus == 65535) s.buyStatuses.map(toMyScenarioStatus) else List.empty
+                )
               dwMap += (x.uniqueId -> x)
               algo.map(_.handleOnSignal(preProcess))
             })
@@ -408,7 +415,7 @@ trait Agent extends NativeTradingAgent {
               val x = dwMap
                 .getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId))
                 .copy(sellStatusesDynamic =
-                  if (s.sellStatuses(0).scenarioStatus == 65535) s.sellStatuses else List.empty
+                  if (s.sellStatuses(0).scenarioStatus == 65535) s.sellStatuses.map(toMyScenarioStatus) else List.empty
                 )
               dwMap += (x.uniqueId -> x)
               algo.map(_.handleOnSignal(preProcess))
