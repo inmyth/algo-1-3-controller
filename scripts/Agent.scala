@@ -1,8 +1,9 @@
 package mrt
 
 import horizontrader.services.instruments.InstrumentDescriptor
-import algotrader.api.NativeTradingAgent
+import algotrader.api.{NativeTradingAgent, TrxMessages}
 import algotrader.api.Messages._
+import algotrader.api.source.summary._
 import com.ingalys.imc.BuySell
 import cats.{Applicative, Id, Monad}
 import cats.data.EitherT
@@ -11,6 +12,7 @@ import com.hsoft.hmm.api.source.automatonstatus.AutomatonStatus
 import com.hsoft.hmm.api.source.position.{RiskPositionByUlSourceBuilder, RiskPositionDetailsSourceBuilder}
 import com.hsoft.hmm.api.source.pricing.{Pricing, PricingSourceBuilder}
 import com.hsoft.hmm.posman.api.position.container.{RiskPositionByULContainer, RiskPositionDetailsContainer}
+import com.hsoft.scenario.status.ScenarioStatus
 import com.ingalys.imc.order.Order
 import com.ingalys.imc.summary.Summary
 import guardian.{Algo, Error}
@@ -24,113 +26,97 @@ import scala.language.higherKinds
 import scala.math.BigDecimal.RoundingMode
 
 trait Agent extends NativeTradingAgent {
-  val portfolioId: String
-  val ulInstrument: InstrumentDescriptor
-  val hedgeInstrument: InstrumentDescriptor //PTT@XBKK ?? Nop will find a way // String => SET-EMAPI-HMM-PROXY|ADVANC@XBKK
-  val dictionaryService: IDictionaryProvider
-  val ulId: String = ulInstrument.getUniqueId
-  val lotSize: Int = 100
+  val portfolioId: String                    //JV
+  val hedgePortfolio: String                 //9901150 Buy Sell UL
+  val ulInstrument: InstrumentDescriptor     //RBF@XBKK
+  val hedgeInstrument: InstrumentDescriptor  //RBF@XBKK
+  val dictionaryService: IDictionaryProvider // List of RBF@XBKK DW
+  val context                       = "DEFAULT"
+  val lotSize: Int                  = 100
+  val exchange                      = "SET-EMAPI-HMM-PROXY"
+  var algo: Option[Algo[Id]]        = None
+  var dwMap: Map[String, DW]        = Map.empty
+  var absoluteResidual: BigDecimal  = BigDecimal("0")
+  var pointValue: Double            = 1.0
+  var portfolioQty: Long            = 0L
+  var theoOpenPrice: Option[Double] = None
+  var lastPrice: Option[Double]     = None
+  var closePrevious: Option[Double] = None
 
-  var algo: Option[Algo[Id]] = None
+  case class DW(
+      uniqueId: String,
+      projectedPrice: Option[Double] = None,
+      delta: Option[Double] = None,
+      putCall: Option[PutCall] = None,
+      sellStatusesDefault: Seq[ScenarioStatus] = Seq.empty,
+      buyStatusesDefault: Seq[ScenarioStatus] = Seq.empty,
+      sellStatusesDynamic: Seq[ScenarioStatus] = Seq.empty,
+      buyStatusesDynamic: Seq[ScenarioStatus] = Seq.empty
+  )
 
-  import algotrader.api.source.summary._
+  def initAlgo[F[_]: Applicative: Monad](ulId: String): Algo[F] =
+    Algo(
+      underlyingSymbol = ulId,
+      lotSize = lotSize,
+      sendOrder = sendOrderAction,
+      logAlert = log.warn,
+      logInfo = log.info,
+      logError = log.error
+    )
 
-  def getDwList(
-      ds: IDictionaryProvider,
-      ulId: String,
-      exchangeName: String = "SET-EMAPI-HMM-PROXY"
-  ): List[InstrumentDescriptor] =
-    ds.getDictionary
-      .getProducts(null)
-      .values()
-      .asScala
-      .filter(d => d.getProductType == ProductTypes.WARRANT)
-      .map(p => p.asInstanceOf[Derivative])
-      .filter(d => d.getUlId == ulId)
-      .map(p =>
-        getService[InstrumentInfoService]
-          .getInstrumentByUniqueId(exchangeName, p.getId)
-      )
-      .toList
-
-  def getProjectedPrice(inDe: InstrumentDescriptor): Option[Double] =
-    source[Summary].get(inDe).latest.flatMap(_.theoOpenPrice)
-
-  def getProjectedVolume(inDe: InstrumentDescriptor): Option[Long] =
-    source[Summary].get(inDe).latest.flatMap(_.theoOpenVolume)
-
-  def getOwnBestBidPrice(inDe: InstrumentDescriptor): Option[Double] =
-    source[Summary].get(inDe).latest.flatMap(_.buyPrice)
-
-  def getOwnBestAskPrice(inDe: InstrumentDescriptor): Option[Double] =
-    source[Summary].get(inDe).latest.flatMap(_.sellPrice)
-
-  def getPortfolioQty(ulId: String): Option[Double] =
-    source[RiskPositionDetailsContainer].get(portfolioId, ulId, true).latest.map(_.getTotalPosition.getNetQty)
-
-  def calcUlQtyPreResidual(
-      ownBestBid: Double,
-      ownBestAsk: Double,
-      marketProjectedPrice: Double,
-      signedDelta: Double,
-      dwId: String,
-      context: String = "DEFAULT"
+  def predictResidual(
+      buyStatusesDefault: Seq[ScenarioStatus],
+      sellStatusesDefault: Seq[ScenarioStatus],
+      buyStatusesDynamic: Seq[ScenarioStatus],
+      sellStatusesDynamic: Seq[ScenarioStatus],
+      dwMarketProjectedPrice: Double,
+      signedDelta: Double
   ): Long = {
-    val autoSource       = source[AutomatonStatus].get("SET-EMAPI-HMM-PROXY", context, dwId, "REFERENCE")
-    val bdProjectedPrice = BigDecimal(marketProjectedPrice).setScale(2, RoundingMode.HALF_EVEN)
-    val bdOwnBestBid     = BigDecimal(ownBestBid).setScale(2, RoundingMode.HALF_EVEN)
-    val bdOwnBestAsk     = BigDecimal(ownBestAsk).setScale(2, RoundingMode.HALF_EVEN)
+    val bdOwnBestBidDefault = BigDecimal(
+      buyStatusesDefault.sortWith(_.priceOnMarket < _.priceOnMarket).lastOption.map(_.priceOnMarket).getOrElse(0.0)
+    ).setScale(2, RoundingMode.HALF_EVEN)
+    val bdOwnBestAskDefault = BigDecimal(
+      sellStatusesDefault
+        .sortWith(_.priceOnMarket < _.priceOnMarket)
+        .headOption
+        .map(_.priceOnMarket)
+        .getOrElse(Int.MaxValue.toDouble)
+    ).setScale(2, RoundingMode.HALF_EVEN)
+    val bdOwnBestBidDynamic = BigDecimal(
+      buyStatusesDynamic.sortWith(_.priceOnMarket < _.priceOnMarket).lastOption.map(_.priceOnMarket).getOrElse(0.0)
+    ).setScale(2, RoundingMode.HALF_EVEN)
+    val bdOwnBestAskDynamic = BigDecimal(
+      sellStatusesDynamic
+        .sortWith(_.priceOnMarket < _.priceOnMarket)
+        .headOption
+        .map(_.priceOnMarket)
+        .getOrElse(Int.MaxValue.toDouble)
+    ).setScale(2, RoundingMode.HALF_EVEN)
 
-    val qty: Long = if (bdProjectedPrice <= bdOwnBestBid) {
-      context match {
-        case "DEFAULT" =>
-          autoSource.latest
-            .map(
-              _.buyStatuses
-                .filter(p => {
-                  val v = BigDecimal(p.priceOnMarket).setScale(2, RoundingMode.HALF_EVEN)
-                  bdProjectedPrice <= v && v <= bdOwnBestBid
-                })
-                .map(_.qtyOnMarketL)
-                .sum
-            )
-            .getOrElse(0L)
-        case "DYNAMIC" =>
-          autoSource.latest
-            .map(_.buyStatuses(0))
-            .map(p => {
-              val v = BigDecimal(p.priceOnMarket).setScale(2, RoundingMode.HALF_EVEN)
-              if (bdProjectedPrice <= v && v <= bdOwnBestBid) p.qtyOnMarketL else 0L
-            })
-            .getOrElse(0L)
-        case _ => 0L
+    val qty: Long = {
+      val (bdOwnBestBid, buyStatusList) = if (bdOwnBestBidDefault <= bdOwnBestBidDynamic) {
+        (bdOwnBestBidDynamic, buyStatusesDynamic)
+      } else {
+        (bdOwnBestBidDefault, buyStatusesDefault)
       }
-    } else if (bdProjectedPrice >= bdOwnBestAsk) {
-      context match {
-        case "DEFAULT" =>
-          autoSource.latest
-            .map(
-              _.sellStatuses
-                .filter(p => {
-                  val v = BigDecimal(p.priceOnMarket).setScale(2, RoundingMode.HALF_EVEN)
-                  bdProjectedPrice >= v && v >= bdOwnBestAsk
-                })
-                .map(_.qtyOnMarketL)
-                .sum
-            )
-            .getOrElse(0L) * -1
-        case "DYNAMIC" =>
-          autoSource.latest
-            .map(_.sellStatuses(0))
-            .map(p => {
-              val v = BigDecimal(p.priceOnMarket).setScale(2, RoundingMode.HALF_EVEN)
-              if (bdProjectedPrice >= v && v >= bdOwnBestAsk) p.qtyOnMarketL else 0L
-            })
-            .getOrElse(0L) * -1
-        case _ => 0L
+      val (bdOwnAskBid, sellStatusList) = if (bdOwnBestAskDefault <= bdOwnBestAskDynamic) {
+        (bdOwnBestAskDefault, sellStatusesDefault)
+      } else {
+        (bdOwnBestAskDynamic, sellStatusesDynamic)
       }
-    } else {
-      0L // own orders are not matched
+      val sumMktVolBid = buyStatusList
+        .filter(p => {
+          p.priceOnMarket > bdOwnBestBid || p.priceOnMarket == 0.0
+        })
+        .map(_.qtyOnMarketL)
+        .sum
+      val sumMktVolAsk = sellStatusList
+        .filter(p => {
+          p.priceOnMarket < bdOwnAskBid || p.priceOnMarket == 0.0
+        })
+        .map(_.qtyOnMarketL)
+        .sum
+      sumMktVolBid - sumMktVolAsk
     }
     // CALL dw buy, order is positive , delta is positive, buy dw-> sell ul
     // PUT dw, buy, order is positive, delta is negative, buy dw -> buy ul
@@ -141,44 +127,26 @@ trait Agent extends NativeTradingAgent {
       .toLong // positive = buy ul, negative = sell ul
   }
 
-  def getPutOrCall(inDe: InstrumentDescriptor): Option[PutCall] =
-    if (inDe.getName.length < 5) None
+  def getPutOrCall(name: String): Option[PutCall] =
+    if (name.length < 5) None
     else {
-      inDe.getName.toList(5) match {
+      name.toList(5) match {
         case 'C' => Some(CALL)
         case 'P' => Some(PUT)
         case _   => None
       }
     }
 
-  def getUlProjectedPrice(ulInst: InstrumentDescriptor, direction: Direction): Either[Error, BigDecimal] =
-    getProjectedPrice(ulInst)
-      .map(BigDecimal(_))
-      .map(p => Algo.getPriceAfterTicks(if (direction == Direction.BUY) true else false, p)) match {
-      case Some(value) => Right(value)
-      case None        => Left(Error.MarketError(s"Underlying price not found for ${ulInst.getName}"))
-    }
-
-  def getDelta(dwId: String): Option[Double] =
-    source[Pricing]
-      .get(dwId, "DEFAULT")
-      .latest
-      .map(_.delta) // negative = put //Nop will confirm DEFAULT or DYNAMIC or both
-
-  def getPointValue(hedgeInDe: InstrumentDescriptor): Double = hedgeInDe.getPointValue.doubleValue()
-
-  def getAbsoluteResidual(pointValue: Double, ulId: String): Option[BigDecimal] =
-    source[RiskPositionByULContainer]
-      .get(portfolioId, ulId, true)
-      .latest
-      .map(p => BigDecimal(p.getTotalPosition.getDeltaCashUlCurr / p.getTotalPosition.getUlSpot / pointValue))
+  def shiftUlProjectedPrice(price: Double, direction: Direction): BigDecimal =
+    Algo.getPriceAfterTicks(if (direction == Direction.BUY) true else false, BigDecimal(price))
 
   def validatePositiveAmount(order: Order): Either[Error, Unit] =
-    Either.cond(order.getQuantityL > 0, (), Error.StateError("Pre-process order qty cannot be negative"))
+    Either.cond(order.getQuantityL >= 0, (), Error.StateError("Agent e. Pre-process order qty cannot be negative"))
 
-  def sendOrderAction(act: OrderAction): Order =
+  def sendOrderAction(act: OrderAction): Order = {
     act match {
       case OrderAction.InsertOrder(order) =>
+        log.info(s"Agent 1000. Send Insert Order $act")
         sendLimitOrder(
           instrument = ulInstrument,
           way = order.getBuySell,
@@ -189,111 +157,280 @@ trait Agent extends NativeTradingAgent {
             o
           }
         )
-      case OrderAction.UpdateOrder(order) =>
-        updateOrder(
-          instrument = ulInstrument,
-          order = order
-        )
-      case OrderAction.CancelOrder(order) =>
-        deleteOrder(
-          instrument = ulInstrument,
-          order = order
-        )
+
+      case OrderAction.UpdateOrder(activeOrderDescriptorView, order) =>
+        log.info(s"Agent 1000. Send Update Order new qty: ${order.getQuantityL} $activeOrderDescriptorView")
+        updateOrderQuantity(activeOrderDescriptorView, order.getQuantityL)
+
+      case OrderAction.CancelOrder(activeOrderDescriptorView, order) =>
+        log.info(s"Agent 1000. Send Cancel Order new qty: $activeOrderDescriptorView")
+        deleteOrder(activeOrderDescriptorView)
     }
+  }
 
   def preProcess[F[_]: Monad]: EitherT[F, Error, Order] =
     for {
-      dwList               <- EitherT.rightT[F, guardian.Error](getDwList(dictionaryService, ulId))
-      dwProjectedPriceList <- EitherT.rightT[F, guardian.Error](dwList.map(getProjectedPrice))
-      bestBidPriceList     <- EitherT.rightT[F, guardian.Error](dwList.map(getOwnBestBidPrice))
-      bestAskPriceList     <- EitherT.rightT[F, guardian.Error](dwList.map(getOwnBestAskPrice))
-      deltaList            <- EitherT.rightT[F, guardian.Error](dwList.map(p => getDelta(p.getUniqueId)))
-      dwPutCallList        <- EitherT.rightT[F, guardian.Error](dwList.map(getPutOrCall))
-      pointValue           <- EitherT.rightT[F, guardian.Error](getPointValue(hedgeInstrument))
-      absoluteResidual     <- EitherT.rightT[F, guardian.Error](getAbsoluteResidual(pointValue, ulId))
-      signedDeltaList <- EitherT.rightT[F, guardian.Error](
-        (deltaList, dwPutCallList).zipped.toList
-          .map {
-            case (Some(delta), Some(CALL)) => 1 * delta
-            case (Some(delta), Some(PUT))  => -1 * delta
+      ulProjectedPrice <- EitherT.fromEither[F](
+        (theoOpenPrice, lastPrice, closePrevious) match {
+          case (Some(v), _, _)       => Right(v)
+          case (None, Some(v), _)    => Right(v)
+          case (None, None, Some(v)) => Right(v)
+          case _                     => Left(Error.MarketError("Agent e. Underlying price is empty"))
+        }
+      )
+      dwList <- EitherT.rightT(dwMap.values.filter(p => {
+        p.projectedPrice.isDefined && p.putCall.isDefined
+      }))
+      _ <- EitherT.rightT(log.info(s"Agent 1. Dw List: $dwList"))
+      dwSignDeltaList <- EitherT.rightT[F, guardian.Error](
+        dwList.map(p => {
+          val signedDelta = (p.putCall, p.delta) match {
+            case (Some(CALL), Some(delta)) => 1 * delta
+            case (Some(PUT), Some(delta))  => -1 * delta
             case _                         => 0
           }
+          p.copy(delta = Some(signedDelta))
+        })
       )
-      partialResidual <- EitherT.rightT[F, guardian.Error](
-        (bestBidPriceList, bestAskPriceList, dwProjectedPriceList).zipped.toList
-          .zip(signedDeltaList)
-          .map {
-            case ((Some(a), Some(b), Some(c)), d) => (a, b, c, d)
-            case ((_, _, _), d)                   => (0.0, 0.0, 0.0, d)
-          }
-          .zip(dwList)
-          .map {
-            case ((a, b, c, d), e) => (a, b, c, d, e.getUniqueId)
-          }
-          .map(p => calcUlQtyPreResidual(p._1, p._2, p._3, p._4, p._5))
+      _ <- EitherT.rightT(log.info(s"Agent 2. Dw signed delta list: $dwSignDeltaList"))
+      predictionResidual <- EitherT.rightT[F, guardian.Error](
+        dwSignDeltaList
+          .map(p =>
+            predictResidual(
+              buyStatusesDefault = p.buyStatusesDefault,
+              sellStatusesDefault = p.sellStatusesDefault,
+              buyStatusesDynamic = p.buyStatusesDynamic,
+              sellStatusesDynamic = p.sellStatusesDynamic,
+              dwMarketProjectedPrice = p.projectedPrice.get,
+              signedDelta = p.delta.get
+            )
+          )
           .sum
       )
-      totalResidual = partialResidual + absoluteResidual.getOrElse(BigDecimal("0")).toLong
-      direction     = if (totalResidual < 0) Direction.SELL else Direction.BUY
-      hzDirection   = if (direction == Direction.SELL) BuySell.SELL else BuySell.BUY
-      ulProjectedPrice <- EitherT.fromEither(getUlProjectedPrice(ulInstrument, direction))
+      _ <- EitherT.rightT(log.info(s"Agent 3. Prediction residual: $predictionResidual"))
+      reversedAbsoluteResidual = absoluteResidual.toLong * -1
+      _ <- EitherT.rightT(log.info(s"Agent 4. Absolute residual: $reversedAbsoluteResidual"))
+      totalResidual = predictionResidual + reversedAbsoluteResidual
+      _ <- EitherT.rightT(log.info(s"Agent 5. Total residual: $totalResidual"))
+      direction <- EitherT.fromEither(
+        if (totalResidual == 0) {
+          Left(Error.MarketError("Agent e. Direction cannot be determined because total residual is zero"))
+        } else if (totalResidual < 0) {
+          Right(Direction.SELL)
+        } else {
+          Right(Direction.BUY)
+        }
+      )
+      hzDirection = if (direction == Direction.SELL) BuySell.SELL else BuySell.BUY
+      ulShiftedProjectedPrice <- EitherT.rightT[F, Error](shiftUlProjectedPrice(ulProjectedPrice, direction))
+      _                       <- EitherT.rightT(log.info(s"Agent 7. Shifted price: $ulShiftedProjectedPrice from $ulProjectedPrice"))
       absTotalResidual = Math.abs(totalResidual)
-      order            = Algo.createOrder(absTotalResidual, ulProjectedPrice.toDouble, hzDirection, CustomId.generate)
+      customId <- EitherT.rightT(CustomId.generate)
+      order = Algo.createPreProcessOrder(absTotalResidual, ulShiftedProjectedPrice.toDouble, hzDirection, customId)
       _ <- EitherT.fromEither(validatePositiveAmount(order))
+      _ <- EitherT.rightT(log.info(s"Agent 9. CustomId: $customId, Total residual order: $order"))
     } yield order
 
-  def initAlgo[F[_]: Applicative: Monad](portfolioQty: Long): F[Algo[F]] =
-    Algo(
-      ulId,
-      lotSize,
-      portfolioQty,
-      preProcess = preProcess[F],
-      sendOrder = sendOrderAction,
-      logAlert = log.warn,
-      logInfo = log.info,
-      logError = log.error
-    )
-
   onOrder {
-    case Nak(t) =>
-      algo.map(_.handleOnOrderNak(CustomId.fromOrder(t.getOrderCopy), "Nak signal / order rejected"))
+    case Nak(activeOrderDescriptorView) =>
+      val hzOrder = activeOrderDescriptorView.getOrderCopy
+      algo.map(
+        _.handleOnOrderNak(
+          CustomId.fromOrder(hzOrder),
+          s"Agent e. Nak signal / order rejected id: ${activeOrderDescriptorView.getOrderCopy.getId}, $activeOrderDescriptorView"
+        )
+      )
 
-    case Ack(t) =>
-      algo.map(_.handleOnOrderAck(CustomId.fromOrder(t.getOrderCopy)))
+    case Ack(activeOrderDescriptorView) =>
+      log.info(
+        s"Agent 2000. Got ack id: ${activeOrderDescriptorView.getOrderCopy.getId}, status: ${activeOrderDescriptorView.getExecutionStatus}, $activeOrderDescriptorView"
+      )
+      algo.map(_.handleOnOrderAck(activeOrderDescriptorView, preProcess))
+
+    case TrxMessages.Rejected(t) =>
+      val hzOrder = t.getOrderCopy
+      algo.map(
+        _.handleOnOrderNak(
+          CustomId.fromOrder(hzOrder),
+          s"Agent e. Nak signal / order rejected (TrxMessages.Rejected): $t"
+        )
+      )
+
+    case Executed(_, activeOrderDescriptorView) =>
+      log.info(
+        s"Agent 2500. Got executed id: ${activeOrderDescriptorView.getOrderCopy.getId}, status: ${activeOrderDescriptorView.getExecutionStatus} $activeOrderDescriptorView"
+      )
+      algo.map(_.handleOnOrderAck(activeOrderDescriptorView, preProcess))
   }
 
   onMessage {
+
     case Load =>
       log.info("Agent Loading")
+      val ulId     = ulInstrument.getUniqueId
+      val sSummary = source[Summary]
+      pointValue = Option(hedgeInstrument.getPointValue).map(_.doubleValue()).getOrElse(1.0)
+      algo = if (algo.isEmpty) Some(initAlgo[Id](ulId)) else algo
 
+      // UL Projected Price
       source[Summary]
         .get(ulInstrument)
-        .onUpdate(_ => algo.map(_.handleOnSignal()))
+        .filter(s => {
+          s.theoOpenPrice.isDefined
+        })
+        .onUpdate(s => {
+          theoOpenPrice = s.theoOpenPrice
+          log.info(s"Agent. ulProjectedPrice: TheoOpenPrice price $theoOpenPrice")
+          algo.map(_.handleOnSignal(preProcess))
+        })
+      source[Summary]
+        .get(ulInstrument)
+        .filter(s => s.last.isDefined)
+        .onUpdate(s => {
+          lastPrice = s.last
+          log.info(s"Agent. ulProjectedPrice: Last price $lastPrice")
+          algo.map(_.handleOnSignal(preProcess))
+        })
+      source[Summary]
+        .get(ulInstrument)
+        .filter(s => s.closePrevious.isDefined)
+        .onUpdate(s => {
+          closePrevious = s.closePrevious
+          log.info(s"Agent. ulProjectedPrice: Close previous $closePrevious")
+          algo.map(_.handleOnSignal(preProcess))
+        })
+      // Portfolio qty
+      source[RiskPositionDetailsContainer]
+        .get(hedgePortfolio, ulInstrument.getUniqueId, true)
+        .filter(p =>
+          Option(p).isDefined && Option(p.getTotalPosition).isDefined && Option(p.getTotalPosition.getNetQty).isDefined
+        )
+        .onUpdate(p => {
+          portfolioQty = p.getTotalPosition.getNetQty.toLong
+          log.info(s"Agent. portfolioQty: $portfolioQty")
+          algo.map(_.handleOnPortfolio(portfolioQty))
+          algo.map(_.handleOnSignal(preProcess))
+        })
+      // Absolute Residual
+      source[RiskPositionByULContainer]
+        .get(portfolioId, ulInstrument.getUniqueId, true)
+        .onUpdate(p => {
+          absoluteResidual =
+            if (p.getTotalPosition.getUlSpot == 0.0 || pointValue == 0.0) BigDecimal("0")
+            else {
+              log.info(s"Agent. getDeltaCashUlCurr: ${p.getTotalPosition.getDeltaCashUlCurr}")
+              log.info(s"Agent. getUlSpot: ${p.getTotalPosition.getUlSpot}")
+              BigDecimal(p.getTotalPosition.getDeltaCashUlCurr / p.getTotalPosition.getUlSpot / pointValue)
+            }
+          log.info(s"Agent. absoluteResidual: $absoluteResidual")
+          algo.map(_.handleOnSignal(preProcess))
+        })
+      // DW
+      dictionaryService.getDictionary
+        .getProducts(null)
+        .values()
+        .asScala
+        .filter(p => p.getProductType == ProductTypes.WARRANT)
+        .map(p => p.asInstanceOf[Derivative])
+        .filter(d => d.getUlId == ulId)
+        .foreach(d => {
+          val dwInstrument = getService[InstrumentInfoService].getInstrumentByUniqueId(exchange, d.getId)
+          dwMap += (dwInstrument.getUniqueId -> DW(
+            uniqueId = dwInstrument.getUniqueId,
+            putCall = getPutOrCall(dwInstrument.getName)
+          ))
+          log.info(s"Agent. Subscribing to Executions on [$d]")
+          sSummary
+            .get(dwInstrument)
+            .filter(s => s.theoOpenPrice.isDefined)
+            .onUpdate(s => {
+              val x = dwMap
+                .getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId))
+                .copy(projectedPrice = s.theoOpenPrice)
+              dwMap += (x.uniqueId -> x)
+              algo.map(_.handleOnSignal(preProcess))
+              log.info(s"Agent. DW price: ${dwInstrument.getUniqueId}, price: ${s.theoOpenPrice}")
+            })
 
-      source[Summary].get(ulInstrument).map(_.modeStr.get) onUpdate {
+          sSummary
+            .get(dwInstrument)
+            .filter(s => s.theoOpenVolume.isDefined)
+            .onUpdate(s => {
+              algo.map(_.handleOnSignal(preProcess))
+              log.info(s"Agent. DW volume: ${dwInstrument.getUniqueId}, volume: ${s.theoOpenVolume}")
+            })
+
+          // Delta
+          source[Pricing]
+            .get(dwInstrument.getUniqueId, "DEFAULT")
+            .filter(s => Option(s.delta).isDefined)
+            .onUpdate(s => {
+              val x =
+                dwMap.getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId)).copy(delta = Some(s.delta))
+              dwMap += (x.uniqueId -> x)
+              log.info(s"Agent. DW delta: ${dwInstrument.getUniqueId}, delta: ${s.delta}")
+              algo.map(_.handleOnSignal(preProcess))
+            })
+          // Default
+          source[AutomatonStatus]
+            .get(exchange, "DEFAULT", dwInstrument.getUniqueId, "REFERENCE")
+            .onUpdate(s => {
+              val x = dwMap
+                .getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId))
+                .copy(buyStatusesDefault = if (s.buyStatuses(0).scenarioStatus == 65535) s.buyStatuses else List.empty)
+              dwMap += (x.uniqueId -> x)
+              algo.map(_.handleOnSignal(preProcess))
+            })
+          source[AutomatonStatus]
+            .get(exchange, "DEFAULT", dwInstrument.getUniqueId, "REFERENCE")
+            .onUpdate(s => {
+              val x = dwMap
+                .getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId))
+                .copy(sellStatusesDefault =
+                  if (s.sellStatuses(0).scenarioStatus == 65535) s.sellStatuses else List.empty
+                )
+              dwMap += (x.uniqueId -> x)
+              algo.map(_.handleOnSignal(preProcess))
+            })
+          // Dynamic
+          source[AutomatonStatus]
+            .get(exchange, "DYNAMIC", dwInstrument.getUniqueId, "REFERENCE")
+            .onUpdate(s => {
+              val x = dwMap
+                .getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId))
+                .copy(buyStatusesDynamic = if (s.buyStatuses(0).scenarioStatus == 65535) s.buyStatuses else List.empty)
+              dwMap += (x.uniqueId -> x)
+              algo.map(_.handleOnSignal(preProcess))
+            })
+          source[AutomatonStatus]
+            .get(exchange, "DYNAMIC", dwInstrument.getUniqueId, "REFERENCE")
+            .onUpdate(s => {
+              val x = dwMap
+                .getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId))
+                .copy(sellStatusesDynamic =
+                  if (s.sellStatuses(0).scenarioStatus == 65535) s.sellStatuses else List.empty
+                )
+              dwMap += (x.uniqueId -> x)
+              algo.map(_.handleOnSignal(preProcess))
+            })
+        })
+
+      sSummary.get(ulInstrument).map(_.modeStr.get) onUpdate {
         case "Startup" =>
           algo = None
 
         case "Pre-Open1" =>
-          algo = Some(initAlgo[Id](getPortfolioQty(ulId).getOrElse(0.0).toLong))
-
-        case "Open1" =>
+        case "Open1"     =>
         case "Intermission" =>
           algo = None
 
         case "Pre-Open2" =>
-          algo = Some(initAlgo[Id](getPortfolioQty(ulId).getOrElse(0.0).toLong))
-
-        case "Open2" =>
+        case "Open2"     =>
         case "Pre-close" =>
-          algo = Some(initAlgo[Id](getPortfolioQty(ulId).getOrElse(0.0).toLong))
-
         case "OffHour" =>
           algo = None
 
         case "Closed" =>
-          algo = None
-
         case "Closed2" =>
           algo = None
 

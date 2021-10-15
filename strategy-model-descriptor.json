@@ -11,6 +11,10 @@
     "hedgeInstrument": {
       "type": "horizontrader.services.instruments.InstrumentDescriptor",
       "mutable": false
+    },
+    "hedgePortfolio": {
+      "type": "java.lang.String",
+      "mutable": false
     }
   },
   "controller": {
@@ -23,6 +27,9 @@
       },
       "hedgeInstrument": {
         "parameter": "hedgeInstrument"
+      },
+      "hedgePortfolio": {
+        "parameter": "hedgePortfolio"
       }
     }
   },
