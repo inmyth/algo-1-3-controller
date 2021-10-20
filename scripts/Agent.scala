@@ -17,6 +17,7 @@ import com.hsoft.scenario.status.ScenarioStatus
 import com.ingalys.imc.depth.Depth
 import com.ingalys.imc.order.Order
 import com.ingalys.imc.summary.Summary
+import guardian.Algo.MyScenarioStatus
 import guardian.{Algo, Error}
 import guardian.Entities.PutCall.{CALL, PUT}
 import guardian.Entities.{CustomId, Direction, OrderAction, PutCall}
@@ -25,7 +26,6 @@ import horizontrader.services.instruments.InstrumentInfoService
 
 import scala.collection.JavaConverters._
 import scala.language.higherKinds
-import scala.math.BigDecimal.RoundingMode
 
 trait Agent extends NativeTradingAgent {
   val portfolioId: String                    //JV
@@ -45,7 +45,7 @@ trait Agent extends NativeTradingAgent {
   var lastPrice: Option[Double]     = None
   var closePrevious: Option[Double] = None
 
-  case class MyScenarioStatus(priceOnMarket: Double, qtyOnMarketL: Long)
+//  case class MyScenarioStatus(priceOnMarket: Double, qtyOnMarketL: Long)
   def toMyScenarioStatus(s: ScenarioStatus): MyScenarioStatus = MyScenarioStatus(s.priceOnMarket, s.qtyOnMarketL)
 
   case class DW(
@@ -71,126 +71,6 @@ trait Agent extends NativeTradingAgent {
       logInfo = log.info,
       logError = log.error
     )
-
-  def predictResidual(
-      marketBuys: Seq[MyScenarioStatus],
-      marketSells: Seq[MyScenarioStatus],
-      ownBuyStatusesDefault: Seq[MyScenarioStatus],
-      ownSellStatusesDefault: Seq[MyScenarioStatus],
-      ownBuyStatusesDynamic: Seq[MyScenarioStatus],
-      ownSellStatusesDynamic: Seq[MyScenarioStatus],
-      dwMarketProjectedPrice: Double,
-      dwMarketProjectedQty: Long,
-      signedDelta: Double
-  ): Long = {
-    val bdOwnBestBidDefault = BigDecimal(
-      ownBuyStatusesDefault.sortWith(_.priceOnMarket < _.priceOnMarket).lastOption.map(_.priceOnMarket).getOrElse(0.0)
-    ).setScale(2, RoundingMode.HALF_EVEN)
-
-    val bdOwnBestAskDefault = BigDecimal(
-      ownSellStatusesDefault
-        .sortWith(_.priceOnMarket < _.priceOnMarket)
-        .headOption
-        .map(_.priceOnMarket)
-        .getOrElse(Int.MaxValue.toDouble)
-    ).setScale(2, RoundingMode.HALF_EVEN)
-    val bdOwnBestBidDynamic = BigDecimal(
-      ownBuyStatusesDynamic.sortWith(_.priceOnMarket < _.priceOnMarket).lastOption.map(_.priceOnMarket).getOrElse(0.0)
-    ).setScale(2, RoundingMode.HALF_EVEN)
-    val bdOwnBestAskDynamic = BigDecimal(
-      ownSellStatusesDynamic
-        .sortWith(_.priceOnMarket < _.priceOnMarket)
-        .headOption
-        .map(_.priceOnMarket)
-        .getOrElse(Int.MaxValue.toDouble)
-    ).setScale(2, RoundingMode.HALF_EVEN)
-
-    log.warn(
-      s"ccc OwnBestBidDefault $bdOwnBestBidDefault OwnBestAskDefault $bdOwnBestAskDefault OwnBestBidDynamic $bdOwnBestBidDynamic OwnBestAskDynamic $bdOwnBestAskDynamic"
-    )
-//ccc 0.23 0.26 0.24 0.25
-    val qty: Long = {
-      val bdOwnBestBid = if (bdOwnBestBidDefault <= bdOwnBestBidDynamic) bdOwnBestBidDynamic else bdOwnBestBidDefault
-      val bdOwnBestAsk = if (bdOwnBestAskDefault <= bdOwnBestAskDynamic) bdOwnBestAskDefault else bdOwnBestAskDynamic
-      /*
-      Agent 2. Dw signed delta list:
-      List(
-      DW(RBF24C2201A@XBKK,Some(0.25),Some(25100),Some(0.06681047005390554),Some(CALL),
-      Vector(MyScenarioStatus(0.26,1066400), MyScenarioStatus(0.27,1030700), MyScenarioStatus(0.28,1010900), MyScenarioStatus(0.29,1090700), MyScenarioStatus(0.3,1030100)),
-      Vector(MyScenarioStatus(0.22,1048700), MyScenarioStatus(0.21,1078400), MyScenarioStatus(0.2,1058200), MyScenarioStatus(0.19,1095000), MyScenarioStatus(0.23,1039000)),
-      Vector(MyScenarioStatus(0.25,25100)), sell
-      Vector(MyScenarioStatus(0.24,25100)))) buy
-
-      buystatuses(0).priceOnMarket
-       */
-      val sumMktVolBid = marketBuys
-        .filter(p => {
-          p.priceOnMarket > bdOwnBestBid || p.priceOnMarket == 0.0
-        })
-        .map(_.qtyOnMarketL)
-        .sum
-      val sumMktVolAsk = marketSells
-        .filter(p => {
-          p.priceOnMarket < bdOwnBestAsk || p.priceOnMarket == 0.0
-        })
-        .map(_.qtyOnMarketL)
-        .sum
-
-      if (bdOwnBestBid <= dwMarketProjectedPrice) {
-        if (sumMktVolBid >= sumMktVolAsk) {
-          0L
-        } else {
-          dwMarketProjectedQty - (sumMktVolBid - sumMktVolAsk)
-        }
-      } else if (bdOwnBestAsk >= dwMarketProjectedPrice) {
-        if (sumMktVolBid <= sumMktVolAsk) {
-          0
-        } else {
-          dwMarketProjectedQty - (sumMktVolAsk - sumMktVolBid)
-        }
-      } else {
-        0
-      }
-      /*
-      val summaryDepth = source[Depth].get(instrument)
-      summaryDepth.onUpdate(d => {
-        log.info(s"BuyCount="+d.getBuyCount)
-        var i:Int = 0
-        for (i <- 0 until d.getBuyCount) {
-          log.info(s"MktBid"+i+"="+d.getBuy(i).getPrice+" MktBidQty"+i+"="+d.getBuy(i).getQuantityL)
-        }
-        log.info(s"SellCount="+d.getSellCount)
-        i=0
-        for (i <- 0 until d.getSellCount) {
-          log.info(s"MktAsk"+i+"="+d.getSell(i).getPrice+" MktAskQty"+i+"="+d.getSell(i).getQuantityL)
-        }
-      })
-       */
-
-//      sumMktVolBid - sumMktVolAsk
-
-      // if (DWOwnBestBid<=DWProjPrice) => Our DW Match Buy
-      //        if (sumMktVolBid>=sumMktVolAsk) then
-      //          PredictionDWMatchQty=0
-      //        Else
-      //          PredictionDWMatchQty = DWProjQty - (sumMktVolBid - sumMktVolAsk)
-      //        End if
-      // End if
-
-      // if (DWOwnBestAsk>=DWProjPrice) => Our DW Match Sell
-      //  if (sumMktVolBid<=sumMktVolAsk) then PredictionDWMatchQty=0
-      //   Else  PredictionDWMatchQty = DWProjQty - (sumMktVolAsk - sumMktVolBid)
-
-      // If not Match Buy or Sell then PredictionDWMatchQty=0
-    }
-    // CALL dw buy, order is positive , delta is positive, buy dw-> sell ul
-    // PUT dw, buy, order is positive, delta is negative, buy dw -> buy ul
-    // CALL dw sell, order is negative, delta is positive, sell dw -> buy ul
-    // PUT dw sell, order is negative, delta is negative, sell dw -> sell ul
-    BigDecimal(qty * signedDelta * -1)
-      .setScale(0, RoundingMode.HALF_EVEN)
-      .toLong // positive = buy ul, negative = sell ul
-  }
 
   def getPutOrCall(name: String): Option[PutCall] =
     if (name.length < 5) None
@@ -235,15 +115,14 @@ trait Agent extends NativeTradingAgent {
 
   def preProcess[F[_]: Monad]: EitherT[F, Error, Order] =
     for {
-//      ulProjectedPrice <- EitherT.fromEither[F](
-//        (theoOpenPrice, lastPrice, closePrevious) match {
-//          case (Some(v), _, _)       => Right(v)
-//          case (None, Some(v), _)    => Right(v)
-//          case (None, None, Some(v)) => Right(v)
-//          case _                     => Left(Error.MarketError("Agent e. Underlying price is empty"))
-//        }
-//      )
-      ulProjectedPrice <- EitherT.rightT(0)
+      ulProjectedPrice <- EitherT.fromEither[F](
+        (theoOpenPrice, lastPrice, closePrevious) match {
+          case (Some(v), _, _)       => Right(v)
+          case (None, Some(v), _)    => Right(v)
+          case (None, None, Some(v)) => Right(v)
+          case _                     => Left(Error.MarketError("Agent e. Underlying price is empty"))
+        }
+      )
       dwList <- EitherT.rightT(dwMap.values.filter(p => {
         p.projectedPrice.isDefined && p.projectedVol.isDefined && p.putCall.isDefined
       }))
@@ -262,7 +141,7 @@ trait Agent extends NativeTradingAgent {
       predictionResidual <- EitherT.rightT[F, guardian.Error](
         dwSignDeltaList
           .map(p =>
-            predictResidual(
+            Algo.predictResidual(
               marketBuys = p.marketBuys,
               marketSells = p.marketSells,
               ownBuyStatusesDefault = p.ownBuyStatusesDefault,
@@ -349,8 +228,8 @@ trait Agent extends NativeTradingAgent {
         })
         .onUpdate(s => {
           theoOpenPrice = s.theoOpenPrice
-          log.info(s"Agent. ulProjectedPrice: TheoOpenPrice price $theoOpenPrice")
-          algo.map(_.handleOnSignal(preProcess))
+          log.info(s"Agent. ulProjectedPrice: TheoOpenPrice price $theoOpenPrice canceling all live orders")
+          algo.map(_.handleOnUlProjectedPrice())
         })
       source[Summary]
         .get(ulInstrument)
@@ -423,14 +302,13 @@ trait Agent extends NativeTradingAgent {
 
           sSummary
             .get(dwInstrument)
-            .filter(s => s.theoOpenVolume.isDefined)
             .onUpdate(s => {
               val x = dwMap
                 .getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId))
-                .copy(projectedVol = s.theoOpenVolume)
+                .copy(projectedVol = if (s.theoOpenVolume.isDefined) s.theoOpenVolume else Some(0L))
               dwMap += (x.uniqueId -> x)
-              algo.map(_.handleOnSignal(preProcess))
               log.info(s"Agent. DW volume: ${dwInstrument.getUniqueId}, volume: ${s.theoOpenVolume}")
+              algo.map(_.handleOnSignal(preProcess))
             })
           // Delta
           source[Pricing]
@@ -525,35 +403,20 @@ trait Agent extends NativeTradingAgent {
         })
 
       sSummary.get(ulInstrument).map(_.modeStr.get) onUpdate {
-        case "Startup" =>
-          algo = None
-
-        case "Pre-Open1" =>
-        case "Open1"     =>
-        case "Intermission" =>
-          algo = None
-
-        case "Pre-Open2" =>
-        case "Open2"     =>
-        case "Pre-close" =>
-        case "OffHour" =>
-          algo = None
-
-        case "Closed" =>
-        case "Closed2" =>
-          algo = None
-
-        case "AfterMarket" =>
-          algo = None
-
+        case "Startup"         =>
+        case "Pre-Open1"       =>
+        case "Open1"           =>
+        case "Intermission"    =>
+        case "Pre-Open2"       =>
+        case "Open2"           =>
+        case "Pre-close"       =>
+        case "OffHour"         =>
+        case "Closed"          =>
+        case "Closed2"         =>
+        case "AfterMarket"     =>
         case "CIRCUIT_BREAKER" =>
-          algo = None
-
-        case "Pre-OpenTemp" =>
-          algo = None
-
-        case _ =>
-          algo = None
+        case "Pre-OpenTemp"    =>
+        case _                 =>
       }
 
     case Start => log.info("Agent starting")
