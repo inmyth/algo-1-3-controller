@@ -161,9 +161,7 @@ trait Agent extends NativeTradingAgent {
       totalResidual = predictionResidual + reversedAbsoluteResidual
       _ <- EitherT.rightT(log.info(s"Agent 5. Total residual: $totalResidual"))
       direction <- EitherT.fromEither(
-        if (totalResidual == 0) {
-          Left(Error.MarketError("Agent e. Direction cannot be determined because total residual is zero"))
-        } else if (totalResidual < 0) {
+        if (totalResidual < 0) {
           Right(Direction.SELL)
         } else {
           Right(Direction.BUY)
