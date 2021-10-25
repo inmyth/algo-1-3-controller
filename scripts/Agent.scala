@@ -227,7 +227,8 @@ trait Agent extends NativeTradingAgent {
         .onUpdate(s => {
           theoOpenPrice = s.theoOpenPrice
           log.info(s"Agent. ulProjectedPrice: TheoOpenPrice price $theoOpenPrice canceling all live orders")
-          algo.map(_.handleOnUlProjectedPrice())
+          algo.map(_.handleOnSignal(preProcess))
+          // price and qty, price changes then update all live orders with new price, if both change
         })
       source[Summary]
         .get(ulInstrument)
