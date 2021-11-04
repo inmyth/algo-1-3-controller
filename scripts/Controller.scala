@@ -4,8 +4,12 @@ import algotrader.api.Messages.{Load, Start}
 import algotrader.api.NativeController
 import horizontrader.plugins.hmm.connections.service.IDictionaryProvider
 import horizontrader.services.instruments.InstrumentDescriptor
-
+import algotrader.api.source.summary._
+import com.ingalys.imc.summary.Summary
 import scala.language.higherKinds
+
+case object StopBot
+case object StartBot
 
 trait Controller extends NativeController {
   val portfolioId: String
@@ -31,6 +35,14 @@ trait Controller extends NativeController {
       )
 
     case Start =>
-  }
+      source[Summary].get(ulInstrument).map(_.modeStr.get).onUpdate {
+        case s @ ("Pre-Open1" | "Pre-Open2" | "Pre-close") =>
+          log.info(s"Controller. $s")
+          agent ! StartBot
 
+        case s @ _ =>
+          log.info(s"Controller. $s")
+          agent ! StopBot
+      }
+  }
 }

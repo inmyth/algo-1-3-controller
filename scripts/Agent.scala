@@ -45,7 +45,6 @@ trait Agent extends NativeTradingAgent {
   var lastPrice: Option[Double]     = None
   var closePrevious: Option[Double] = None
 
-//  case class MyScenarioStatus(priceOnMarket: Double, qtyOnMarketL: Long)
   def toMyScenarioStatus(s: ScenarioStatus): MyScenarioStatus = MyScenarioStatus(s.priceOnMarket, s.qtyOnMarketL)
 
   case class DW(
@@ -90,7 +89,7 @@ trait Agent extends NativeTradingAgent {
 
   def sendOrderAction(act: OrderAction): Order = {
     act match {
-      case OrderAction.InsertOrder(order) =>
+      case OrderAction.InsertOrder(order, _) =>
         log.info(s"Agent 1000. Send Insert Order $act")
         sendLimitOrder(
           instrument = ulInstrument,
@@ -104,11 +103,19 @@ trait Agent extends NativeTradingAgent {
         )
 
       case OrderAction.UpdateOrder(activeOrderDescriptorView, order) =>
-        log.info(s"Agent 1000. Send Update Order new qty: ${order.getQuantityL} $activeOrderDescriptorView")
-        updateOrderQuantity(activeOrderDescriptorView, order.getQuantityL)
+        log.info(s"Agent 1100. Send Update Order new qty: ${order.getQuantityL} new price: ${order.getPrice} $order")
+        updateOrder(
+          ulInstrument,
+          getOrderByUserData(activeOrderDescriptorView.getUserData).get.getOrderCopy.deepClone().asInstanceOf[Order],
+          (o, _) => {
+            o.setPrice(order.getPrice)
+            o.setQuantity(order.getQuantityL)
+            o
+          }
+        )
 
       case OrderAction.CancelOrder(activeOrderDescriptorView, order) =>
-        log.info(s"Agent 1000. Send Cancel Order new qty: $activeOrderDescriptorView")
+        log.info(s"Agent 1200. Send Cancel Order: $order")
         deleteOrder(activeOrderDescriptorView)
     }
   }
@@ -211,8 +218,8 @@ trait Agent extends NativeTradingAgent {
 
   onMessage {
 
-    case Load =>
-      log.info("Agent Loading")
+    case StartBot =>
+      log.info("Agent StartBot")
       val ulId     = ulInstrument.getUniqueId
       val sSummary = source[Summary]
       pointValue = Option(hedgeInstrument.getPointValue).map(_.doubleValue()).getOrElse(1.0)
@@ -226,7 +233,7 @@ trait Agent extends NativeTradingAgent {
         })
         .onUpdate(s => {
           theoOpenPrice = s.theoOpenPrice
-          log.info(s"Agent. ulProjectedPrice: TheoOpenPrice price $theoOpenPrice canceling all live orders")
+          log.info(s"Agent. ulProjectedPrice: TheoOpenPrice price $theoOpenPrice")
           algo.map(_.handleOnSignal(preProcess))
           // price and qty, price changes then update all live orders with new price, if both change
         })
@@ -395,29 +402,17 @@ trait Agent extends NativeTradingAgent {
                     s.sellStatuses.filter(_ != null).map(toMyScenarioStatus).toVector
                   else Vector.empty
                 )
-
               dwMap += (x.uniqueId -> x)
               algo.map(_.handleOnSignal(preProcess))
             })
         })
 
-      sSummary.get(ulInstrument).map(_.modeStr.get) onUpdate {
-        case "Startup"         =>
-        case "Pre-Open1"       =>
-        case "Open1"           =>
-        case "Intermission"    =>
-        case "Pre-Open2"       =>
-        case "Open2"           =>
-        case "Pre-close"       =>
-        case "OffHour"         =>
-        case "Closed"          =>
-        case "Closed2"         =>
-        case "AfterMarket"     =>
-        case "CIRCUIT_BREAKER" =>
-        case "Pre-OpenTemp"    =>
-        case _                 =>
-      }
-
+    case Load  => log.info("Agent loading")
     case Start => log.info("Agent starting")
+
+    case StopBot =>
+      log.info("Agent. Got StopBot")
+      algo = None
+
   }
 }
