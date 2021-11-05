@@ -157,7 +157,8 @@ trait Agent extends NativeTradingAgent {
               ownSellStatusesDynamic = p.ownSellStatusesDynamic,
               dwMarketProjectedPrice = p.projectedPrice.get,
               dwMarketProjectedQty = p.projectedVol.get,
-              signedDelta = p.delta.get
+              signedDelta = p.delta.get,
+              log.info
             )
           )
           .sum
@@ -296,26 +297,30 @@ trait Agent extends NativeTradingAgent {
           log.info(s"Agent. Subscribing to Executions on [$d]")
           sSummary
             .get(dwInstrument)
-            .filter(s => s.theoOpenPrice.isDefined)
             .onUpdate(s => {
-              val x = dwMap
-                .getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId))
-                .copy(projectedPrice = s.theoOpenPrice)
-              dwMap += (x.uniqueId -> x)
-              algo.map(_.handleOnSignal(preProcess))
-              log.info(s"Agent. DW price: ${dwInstrument.getUniqueId}, price: ${s.theoOpenPrice}")
+              (s.theoOpenPrice, s.theoOpenVolume) match {
+                case (Some(_), Some(_)) =>
+                  val x = dwMap // Array, Set, Map(key, value)
+                    .getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId))
+                    .copy(projectedPrice = s.theoOpenPrice, projectedVol = s.theoOpenVolume)
+                  dwMap += (x.uniqueId -> x)
+                  algo.map(_.handleOnSignal(preProcess))
+                  log.info(
+                    s"Agent. DW price & vol: ${dwInstrument.getUniqueId}, price: ${s.theoOpenPrice}, vol: ${s.theoOpenVolume}"
+                  )
+
+                case (None, None) =>
+                  val x = dwMap
+                    .getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId))
+                    .copy(projectedPrice = Some(0.0), projectedVol = Some(0L))
+                  dwMap += (x.uniqueId -> x)
+                  algo.map(_.handleOnSignal(preProcess))
+                  log.info(s"Agent. DW price & vol: ${dwInstrument.getUniqueId} are empty")
+
+                case _ =>
+              }
             })
 
-          sSummary
-            .get(dwInstrument)
-            .onUpdate(s => {
-              val x = dwMap
-                .getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId))
-                .copy(projectedVol = if (s.theoOpenVolume.isDefined) s.theoOpenVolume else Some(0L))
-              dwMap += (x.uniqueId -> x)
-              log.info(s"Agent. DW volume: ${dwInstrument.getUniqueId}, volume: ${s.theoOpenVolume}")
-              algo.map(_.handleOnSignal(preProcess))
-            })
           // Delta
           source[Pricing]
             .get(dwInstrument.getUniqueId, "DEFAULT")
