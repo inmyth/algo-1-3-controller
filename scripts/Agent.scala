@@ -131,7 +131,8 @@ trait Agent extends NativeTradingAgent {
         }
       )
       dwList <- EitherT.rightT(dwMap.values.filter(p => {
-        p.projectedPrice.isDefined && p.projectedVol.isDefined && p.putCall.isDefined
+        p.projectedPrice.isDefined && p.projectedVol.isDefined && p.putCall.isDefined &&
+          (p.ownBuyStatusesDefault.nonEmpty || p.ownSellStatusesDefault.nonEmpty || p.ownBuyStatusesDynamic.nonEmpty || p.ownSellStatusesDynamic.nonEmpty)
       }))
       _ <- EitherT.rightT(log.info(s"Agent 1. Dw List: $dwList"))
       dwSignDeltaList <- EitherT.rightT[F, guardian.Error](
