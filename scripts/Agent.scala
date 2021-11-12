@@ -368,6 +368,7 @@ trait Agent extends NativeTradingAgent {
                   else Vector.empty
                 )
               dwMap += (x.uniqueId -> x)
+              log.info(s"DW own default buys ${dwInstrument.getUniqueId} $x")
               algo.map(_.handleOnSignal(preProcess))
             })
           source[AutomatonStatus]
@@ -382,6 +383,7 @@ trait Agent extends NativeTradingAgent {
                   else Vector.empty
                 )
               dwMap += (x.uniqueId -> x)
+              log.info(s"DW own default sells ${dwInstrument.getUniqueId} $x")
               algo.map(_.handleOnSignal(preProcess))
             })
           // Dynamic Own order
@@ -396,6 +398,7 @@ trait Agent extends NativeTradingAgent {
                   else Vector.empty
                 )
               dwMap += (x.uniqueId -> x)
+              log.info(s"DW own dynamic buys ${dwInstrument.getUniqueId} $x")
               algo.map(_.handleOnSignal(preProcess))
             })
           source[AutomatonStatus]
@@ -409,6 +412,7 @@ trait Agent extends NativeTradingAgent {
                   else Vector.empty
                 )
               dwMap += (x.uniqueId -> x)
+              log.info(s"DW own dynamic sells ${dwInstrument.getUniqueId} $x")
               algo.map(_.handleOnSignal(preProcess))
             })
         })
