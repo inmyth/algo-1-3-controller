@@ -8,7 +8,7 @@ import algotrader.api.source.summary._
 import com.ingalys.imc.BuySell
 import cats.{Applicative, Id, Monad}
 import cats.data.EitherT
-import com.hsoft.datamaster.product.{Derivative, ProductTypes}
+import com.hsoft.datamaster.product.{Derivative, ProductTypes, Warrant}
 import com.hsoft.hmm.api.source.automatonstatus.AutomatonStatus
 import com.hsoft.hmm.api.source.position.{RiskPositionByUlSourceBuilder, RiskPositionDetailsSourceBuilder}
 import com.hsoft.hmm.api.source.pricing.{Pricing, PricingSourceBuilder}
@@ -24,8 +24,10 @@ import guardian.Entities.{CustomId, Direction, OrderAction, PutCall}
 import horizontrader.plugins.hmm.connections.service.IDictionaryProvider
 import horizontrader.services.instruments.InstrumentInfoService
 
+import scala.util.Try
 import scala.collection.JavaConverters._
 import scala.language.higherKinds
+import scala.math.BigDecimal.RoundingMode
 
 trait Agent extends NativeTradingAgent {
   val portfolioId: String                    //JV
@@ -70,16 +72,6 @@ trait Agent extends NativeTradingAgent {
       logInfo = log.info,
       logError = log.error
     )
-
-  def getPutOrCall(name: String): Option[PutCall] =
-    if (name.length < 5) None
-    else {
-      name.toList(5) match {
-        case 'C' => Some(CALL)
-        case 'P' => Some(PUT)
-        case _   => None
-      }
-    }
 
   def shiftUlProjectedPrice(price: Double, direction: Direction): BigDecimal =
     Algo.getPriceAfterTicks(if (direction == Direction.BUY) true else false, BigDecimal(price))
@@ -131,7 +123,9 @@ trait Agent extends NativeTradingAgent {
         }
       )
       dwList <- EitherT.rightT(dwMap.values.filter(p => {
-        p.projectedPrice.isDefined && p.projectedVol.isDefined && p.putCall.isDefined &&
+        p.projectedPrice.isDefined && BigDecimal(p.projectedPrice.get)
+          .setScale(2, RoundingMode.HALF_EVEN) != BigDecimal("0") &&
+          p.projectedVol.isDefined && p.projectedVol.get != 0L && p.putCall.isDefined &&
           (p.ownBuyStatusesDefault.nonEmpty || p.ownSellStatusesDefault.nonEmpty || p.ownBuyStatusesDynamic.nonEmpty || p.ownSellStatusesDynamic.nonEmpty)
       }))
       _ <- EitherT.rightT(log.info(s"Agent 1. Dw List: $dwList"))
@@ -159,7 +153,7 @@ trait Agent extends NativeTradingAgent {
               dwMarketProjectedPrice = p.projectedPrice.get,
               dwMarketProjectedQty = p.projectedVol.get,
               signedDelta = p.delta.get,
-              log.info
+              log = log.info
             )
           )
           .sum
@@ -291,9 +285,14 @@ trait Agent extends NativeTradingAgent {
         .filter(d => d.getUlId == ulId)
         .foreach(d => {
           val dwInstrument = getService[InstrumentInfoService].getInstrumentByUniqueId(exchange, d.getId)
+          val putCall = dictionaryService.getDictionary.getProduct(d.getId).asInstanceOf[Warrant].getOptionType match {
+            case 1 => Some(PutCall.CALL)
+            case 2 => Some(PutCall.PUT)
+            case _ => None
+          }
           dwMap += (dwInstrument.getUniqueId -> DW(
             uniqueId = dwInstrument.getUniqueId,
-            putCall = getPutOrCall(dwInstrument.getName)
+            putCall = putCall
           ))
           log.info(s"Agent. Subscribing to Executions on [$d]")
           sSummary
