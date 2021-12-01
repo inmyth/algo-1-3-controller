@@ -19,12 +19,10 @@ import com.ingalys.imc.order.Order
 import com.ingalys.imc.summary.Summary
 import guardian.Algo.MyScenarioStatus
 import guardian.{Algo, Error}
-import guardian.Entities.PutCall.{CALL, PUT}
 import guardian.Entities.{CustomId, Direction, OrderAction, PutCall}
 import horizontrader.plugins.hmm.connections.service.IDictionaryProvider
 import horizontrader.services.instruments.InstrumentInfoService
 
-import scala.util.Try
 import scala.collection.JavaConverters._
 import scala.language.higherKinds
 import scala.math.BigDecimal.RoundingMode
@@ -129,19 +127,9 @@ trait Agent extends NativeTradingAgent {
           (p.ownBuyStatusesDefault.nonEmpty || p.ownSellStatusesDefault.nonEmpty || p.ownBuyStatusesDynamic.nonEmpty || p.ownSellStatusesDynamic.nonEmpty)
       }))
       _ <- EitherT.rightT(log.info(s"Agent 1. Dw List: $dwList"))
-      dwSignDeltaList <- EitherT.rightT[F, guardian.Error](
-        dwList.map(p => {
-          val signedDelta = (p.putCall, p.delta) match {
-            case (Some(CALL), Some(delta)) => 1 * delta
-            case (Some(PUT), Some(delta))  => -1 * delta
-            case _                         => 0
-          }
-          p.copy(delta = Some(signedDelta))
-        })
-      )
-      _ <- EitherT.rightT(log.info(s"Agent 2. Dw signed delta list: $dwSignDeltaList"))
       predictionResidual <- EitherT.rightT[F, guardian.Error](
-        dwSignDeltaList
+        dwList
+          .filter(d => d.delta.isDefined)
           .map(p =>
             Algo.predictResidual(
               marketBuys = p.marketBuys,

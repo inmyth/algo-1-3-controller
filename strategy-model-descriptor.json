@@ -4,16 +4,16 @@
       "type": "java.lang.String",
       "mutable": false
     },
+    "hedgePortfolio": {
+      "type": "java.lang.String",
+      "mutable": false
+    },
     "ulInstrument": {
       "type": "horizontrader.services.instruments.InstrumentDescriptor",
       "mutable": false
     },
     "hedgeInstrument": {
       "type": "horizontrader.services.instruments.InstrumentDescriptor",
-      "mutable": false
-    },
-    "hedgePortfolio": {
-      "type": "java.lang.String",
       "mutable": false
     }
   },
