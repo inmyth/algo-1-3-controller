@@ -41,11 +41,11 @@ trait Controller extends NativeController {
     case Start =>
       source[Summary].get(ulInstrument).map(_.modeStr.get).onUpdate {
         case s @ ("Pre-Open1" | "Pre-Open2" | "Pre-close") =>
-          log.info(s"Controller. $s")
+          log.info(s"Controller. UL Start bot Pre-open1/2/preclose  $s")
           agent ! StartBot
 
         case s @ _ =>
-          log.info(s"Controller. $s")
+          log.info(s"Controller. UL Stop bot $s")
           agent ! StopBot
       }
 
@@ -60,11 +60,11 @@ trait Controller extends NativeController {
           val dwInstrument = getService[InstrumentInfoService].getInstrumentByUniqueId(exchange, d.getId)
           source[Summary].get(dwInstrument).map(_.modeStr.get).onUpdate {
             case s @ ("Pre-Open1" | "Pre-Open2" | "Pre-close") =>
-              log.info(s"Controller. $s")
+              log.info(s"Controller. DW Start bot Pre-open1/2/preclose $s")
               agent ! StartBot
 
             case s @ _ =>
-              log.info(s"Controller. $s")
+              log.info(s"Controller. DW Stop bot $s")
               agent ! StopBot
           }
         })

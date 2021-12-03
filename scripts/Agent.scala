@@ -8,6 +8,7 @@ import algotrader.api.source.summary._
 import com.ingalys.imc.BuySell
 import cats.{Applicative, Id, Monad}
 import cats.data.EitherT
+import cats.implicits.{catsSyntaxApplicativeId, toTraverseOps}
 import com.hsoft.datamaster.product.{Derivative, ProductTypes, Warrant}
 import com.hsoft.hmm.api.source.automatonstatus.AutomatonStatus
 import com.hsoft.hmm.api.source.position.{RiskPositionByUlSourceBuilder, RiskPositionDetailsSourceBuilder}
@@ -65,7 +66,6 @@ trait Agent extends NativeTradingAgent {
     Algo(
       underlyingSymbol = ulId,
       lotSize = lotSize,
-      sendOrder = sendOrderAction,
       logAlert = log.warn,
       logInfo = log.info,
       logError = log.error
@@ -168,6 +168,17 @@ trait Agent extends NativeTradingAgent {
       _ <- EitherT.rightT(log.info(s"Agent 9. CustomId: $customId, Total residual order: $order"))
     } yield order
 
+  def processAndSend(c: EitherT[Id, Error, List[OrderAction]]): Unit =
+    (for {
+      oas <- c
+      send = if (algo.isDefined) oas else List.empty[OrderAction]
+      _ <- EitherT.right[Error](send.map(p => sendOrderAction(p).pure[Id]).sequence)
+    } yield ()).value match {
+      case Right(_) => ()
+      case Left(e) =>
+        log.warn(e.msg)
+    }
+
   onOrder {
     case Nak(activeOrderDescriptorView) =>
       val hzOrder = activeOrderDescriptorView.getOrderCopy
@@ -182,7 +193,10 @@ trait Agent extends NativeTradingAgent {
       log.info(
         s"Agent 2000. Got ack id: ${activeOrderDescriptorView.getOrderCopy.getId}, status: ${activeOrderDescriptorView.getExecutionStatus}, $activeOrderDescriptorView"
       )
-      algo.map(_.handleOnOrderAck(activeOrderDescriptorView, preProcess))
+      val ots = algo
+        .map(_.handleOnOrderAck(activeOrderDescriptorView, preProcess))
+        .getOrElse(EitherT.rightT[Id, Error](List.empty[OrderAction]))
+      processAndSend(ots)
 
     case TrxMessages.Rejected(t) =>
       val hzOrder = t.getOrderCopy
@@ -197,7 +211,10 @@ trait Agent extends NativeTradingAgent {
       log.info(
         s"Agent 2500. Got executed id: ${activeOrderDescriptorView.getOrderCopy.getId}, status: ${activeOrderDescriptorView.getExecutionStatus} $activeOrderDescriptorView"
       )
-      algo.map(_.handleOnOrderAck(activeOrderDescriptorView, preProcess))
+      val ots = algo
+        .map(_.handleOnOrderAck(activeOrderDescriptorView, preProcess))
+        .getOrElse(EitherT.rightT[Id, Error](List.empty[OrderAction]))
+      processAndSend(ots)
   }
 
   onMessage {
@@ -218,7 +235,8 @@ trait Agent extends NativeTradingAgent {
         .onUpdate(s => {
           theoOpenPrice = s.theoOpenPrice
           log.info(s"Agent. ulProjectedPrice: TheoOpenPrice price $theoOpenPrice")
-          algo.map(_.handleOnSignal(preProcess))
+          val ots = EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
+          processAndSend(ots)
           // price and qty, price changes then update all live orders with new price, if both change
         })
       source[Summary]
@@ -227,7 +245,8 @@ trait Agent extends NativeTradingAgent {
         .onUpdate(s => {
           lastPrice = s.last
           log.info(s"Agent. ulProjectedPrice: Last price $lastPrice")
-          algo.map(_.handleOnSignal(preProcess))
+          val ots = EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
+          processAndSend(ots)
         })
       source[Summary]
         .get(ulInstrument)
@@ -235,7 +254,8 @@ trait Agent extends NativeTradingAgent {
         .onUpdate(s => {
           closePrevious = s.closePrevious
           log.info(s"Agent. ulProjectedPrice: Close previous $closePrevious")
-          algo.map(_.handleOnSignal(preProcess))
+          val ots = EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
+          processAndSend(ots)
         })
       // Portfolio qty
       source[RiskPositionDetailsContainer]
@@ -247,7 +267,8 @@ trait Agent extends NativeTradingAgent {
           portfolioQty = p.getTotalPosition.getNetQty.toLong
           log.info(s"Agent. portfolioQty: $portfolioQty")
           algo.map(_.handleOnPortfolio(portfolioQty))
-          algo.map(_.handleOnSignal(preProcess))
+          val ots = EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
+          processAndSend(ots)
         })
       // Absolute Residual
       source[RiskPositionByULContainer]
@@ -261,7 +282,8 @@ trait Agent extends NativeTradingAgent {
               BigDecimal(p.getTotalPosition.getDeltaCashUlCurr / p.getTotalPosition.getUlSpot / pointValue)
             }
           log.info(s"Agent. absoluteResidual: $absoluteResidual")
-          algo.map(_.handleOnSignal(preProcess))
+          val ots = EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
+          processAndSend(ots)
         })
       // DW
       dictionaryService.getDictionary
@@ -292,7 +314,9 @@ trait Agent extends NativeTradingAgent {
                     .getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId))
                     .copy(projectedPrice = s.theoOpenPrice, projectedVol = s.theoOpenVolume)
                   dwMap += (x.uniqueId -> x)
-                  algo.map(_.handleOnSignal(preProcess))
+                  val ots =
+                    EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
+                  processAndSend(ots)
                   log.info(
                     s"Agent. DW price & vol: ${dwInstrument.getUniqueId}, price: ${s.theoOpenPrice}, vol: ${s.theoOpenVolume}"
                   )
@@ -302,7 +326,9 @@ trait Agent extends NativeTradingAgent {
                     .getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId))
                     .copy(projectedPrice = Some(0.0), projectedVol = Some(0L))
                   dwMap += (x.uniqueId -> x)
-                  algo.map(_.handleOnSignal(preProcess))
+                  val ots =
+                    EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
+                  processAndSend(ots)
                   log.info(s"Agent. DW price & vol: ${dwInstrument.getUniqueId} are empty")
 
                 case _ =>
@@ -318,7 +344,9 @@ trait Agent extends NativeTradingAgent {
                 dwMap.getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId)).copy(delta = Some(s.delta))
               dwMap += (x.uniqueId -> x)
               log.info(s"Agent. DW delta: ${dwInstrument.getUniqueId}, delta: ${s.delta}")
-              algo.map(_.handleOnSignal(preProcess))
+              val ots =
+                EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
+              processAndSend(ots)
             })
 
           // Market buys & sells
@@ -340,7 +368,8 @@ trait Agent extends NativeTradingAgent {
               .getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId))
               .copy(marketBuys = buys, marketSells = sells)
             dwMap += (x.uniqueId -> x)
-            algo.map(_.handleOnSignal(preProcess))
+            val ots = EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
+            processAndSend(ots)
           })
 
           // Default Own order
@@ -356,7 +385,9 @@ trait Agent extends NativeTradingAgent {
                 )
               dwMap += (x.uniqueId -> x)
               log.info(s"DW own default buys ${dwInstrument.getUniqueId} $x")
-              algo.map(_.handleOnSignal(preProcess))
+              val ots =
+                EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
+              processAndSend(ots)
             })
           source[AutomatonStatus]
             .get(exchange, "DEFAULT", dwInstrument.getUniqueId, "REFERENCE")
@@ -371,7 +402,9 @@ trait Agent extends NativeTradingAgent {
                 )
               dwMap += (x.uniqueId -> x)
               log.info(s"DW own default sells ${dwInstrument.getUniqueId} $x")
-              algo.map(_.handleOnSignal(preProcess))
+              val ots =
+                EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
+              processAndSend(ots)
             })
           // Dynamic Own order
           source[AutomatonStatus]
@@ -386,7 +419,9 @@ trait Agent extends NativeTradingAgent {
                 )
               dwMap += (x.uniqueId -> x)
               log.info(s"DW own dynamic buys ${dwInstrument.getUniqueId} $x")
-              algo.map(_.handleOnSignal(preProcess))
+              val ots =
+                EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
+              processAndSend(ots)
             })
           source[AutomatonStatus]
             .get(exchange, "DYNAMIC", dwInstrument.getUniqueId, "REFERENCE")
@@ -400,7 +435,9 @@ trait Agent extends NativeTradingAgent {
                 )
               dwMap += (x.uniqueId -> x)
               log.info(s"DW own dynamic sells ${dwInstrument.getUniqueId} $x")
-              algo.map(_.handleOnSignal(preProcess))
+              val ots =
+                EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
+              processAndSend(ots)
             })
         })
 
@@ -410,6 +447,5 @@ trait Agent extends NativeTradingAgent {
     case StopBot =>
       log.info("Agent. Got StopBot")
       algo = None
-
   }
 }
