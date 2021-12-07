@@ -124,6 +124,7 @@ trait Agent extends NativeTradingAgent {
         p.projectedPrice.isDefined && BigDecimal(p.projectedPrice.get)
           .setScale(2, RoundingMode.HALF_EVEN) != BigDecimal("0") &&
           p.projectedVol.isDefined && p.projectedVol.get != 0L && p.putCall.isDefined &&
+          (p.marketBuys.nonEmpty || p.marketSells.nonEmpty) &&
           (p.ownBuyStatusesDefault.nonEmpty || p.ownSellStatusesDefault.nonEmpty || p.ownBuyStatusesDynamic.nonEmpty || p.ownSellStatusesDynamic.nonEmpty)
       }))
       _ <- EitherT.rightT(log.info(s"Agent 1. Dw List: $dwList"))
@@ -364,12 +365,23 @@ trait Agent extends NativeTradingAgent {
               .filter(_ != null)
               .map(p => MyScenarioStatus(p.getPrice, p.getQuantityL))
               .toVector
-            val x = dwMap
-              .getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId))
-              .copy(marketBuys = buys, marketSells = sells)
-            dwMap += (x.uniqueId -> x)
-            val ots = EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
-            processAndSend(ots)
+
+            val dwList = dwMap.getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId))
+            (
+              !buys.exists(_.qtyOnMarketL != 0L) && !sells.exists(_.qtyOnMarketL != 0L), // dw market sells & buys empty
+              dwList.marketBuys.isEmpty && dwList.marketSells.isEmpty                    // previous sells & buys empty
+            ) match {
+              case (false, _) => // calc bot is starting + normal situation
+                val x = dwMap
+                  .getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId))
+                  .copy(marketBuys = buys, marketSells = sells)
+                dwMap += (x.uniqueId -> x)
+                val ots =
+                  EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
+                processAndSend(ots)
+
+              case (true, _) => // dont calc when market changes
+            }
           })
 
           // Default Own order
