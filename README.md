@@ -12,6 +12,8 @@ This happens when EitherT composition is missing type. I solved this by reducing
 ### Behavior
 - check isDefined and 0 in params that have it
 - check gap between market open / close signal between dw and ul
+- bot should stop when order executed signal (from ul) arrives. this means the market has changed status. bot stops when it gets any ul executed signal.  
+- dw and ul can open or close at different time. 
 
 ## Creating new Gradle project
 1. Horizon > create new strategy > Generate IDEA files 

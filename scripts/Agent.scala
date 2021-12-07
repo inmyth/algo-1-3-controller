@@ -210,12 +210,9 @@ trait Agent extends NativeTradingAgent {
 
     case Executed(_, activeOrderDescriptorView) =>
       log.info(
-        s"Agent 2500. Got executed id: ${activeOrderDescriptorView.getOrderCopy.getId}, status: ${activeOrderDescriptorView.getExecutionStatus} $activeOrderDescriptorView"
+        s"Agent 2500. Got executed, stopping the bot. id: ${activeOrderDescriptorView.getOrderCopy.getId}, status: ${activeOrderDescriptorView.getExecutionStatus} $activeOrderDescriptorView"
       )
-      val ots = algo
-        .map(_.handleOnOrderAck(activeOrderDescriptorView, preProcess))
-        .getOrElse(EitherT.rightT[Id, Error](List.empty[OrderAction]))
-      processAndSend(ots)
+      algo = None
   }
 
   onMessage {
