@@ -46,7 +46,12 @@ trait Agent extends NativeTradingAgent {
   var lastPrice: Option[Double]     = None
   var closePrevious: Option[Double] = None
 
-  def toMyScenarioStatus(s: ScenarioStatus): MyScenarioStatus = MyScenarioStatus(s.priceOnMarket, s.qtyOnMarketL)
+  def toMyScenarioStatus(s: ScenarioStatus): Option[MyScenarioStatus] =
+    if (Option(s.priceOnMarket).isEmpty || Option(s.qtyOnMarketL).isEmpty) {
+      None
+    } else {
+      Some(MyScenarioStatus(BigDecimal(s.priceOnMarket).setScale(2, RoundingMode.HALF_EVEN), s.qtyOnMarketL))
+    }
 
   case class DW(
       uniqueId: String,
@@ -121,11 +126,14 @@ trait Agent extends NativeTradingAgent {
         }
       )
       dwList <- EitherT.rightT(dwMap.values.filter(p => {
+        log.info(
+          s"pre-predictionresidual projected price ${p.projectedPrice}, projected vol ${p.projectedVol}, market buys ${p.marketBuys}, market sells ${p.marketSells}, ownBuyStatusesDefault ${p.ownBuyStatusesDefault}, ownSellStatusesDefault ${p.ownBuyStatusesDefault}, ownBuyStatusesDynamic ${p.ownBuyStatusesDynamic}, ownSellStatusesDefault ${p.ownSellStatusesDynamic}"
+        )
         p.projectedPrice.isDefined && BigDecimal(p.projectedPrice.get)
           .setScale(2, RoundingMode.HALF_EVEN) != BigDecimal("0") &&
-          p.projectedVol.isDefined && p.projectedVol.get != 0L && p.putCall.isDefined &&
-          (p.marketBuys.nonEmpty || p.marketSells.nonEmpty) &&
-          (p.ownBuyStatusesDefault.nonEmpty || p.ownSellStatusesDefault.nonEmpty || p.ownBuyStatusesDynamic.nonEmpty || p.ownSellStatusesDynamic.nonEmpty)
+        p.projectedVol.isDefined && p.projectedVol.get != 0L && p.putCall.isDefined &&
+        (p.marketBuys.nonEmpty || p.marketSells.nonEmpty) &&
+        (p.ownBuyStatusesDefault.nonEmpty || p.ownSellStatusesDefault.nonEmpty || p.ownBuyStatusesDynamic.nonEmpty || p.ownSellStatusesDynamic.nonEmpty)
       }))
       _ <- EitherT.rightT(log.info(s"Agent 1. Dw List: $dwList"))
       predictionResidual <- EitherT.rightT[F, guardian.Error](
@@ -288,7 +296,9 @@ trait Agent extends NativeTradingAgent {
         .getProducts(null)
         .values()
         .asScala
-        .filter(p => p.getProductType == ProductTypes.WARRANT)
+        .filter(p => {
+          p.getProductType == ProductTypes.WARRANT
+        })
         .map(p => p.asInstanceOf[Derivative])
         .filter(d => d.getUlId == ulId)
         .foreach(d => {
@@ -302,7 +312,6 @@ trait Agent extends NativeTradingAgent {
             uniqueId = dwInstrument.getUniqueId,
             putCall = putCall
           ))
-          log.info(s"Agent. Subscribing to Executions on [$d]")
           sSummary
             .get(dwInstrument)
             .onUpdate(s => {
@@ -363,21 +372,18 @@ trait Agent extends NativeTradingAgent {
               .map(p => MyScenarioStatus(p.getPrice, p.getQuantityL))
               .toVector
 
-            val dwList = dwMap.getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId))
-            (
-              !buys.exists(_.qtyOnMarketL != 0L) && !sells.exists(_.qtyOnMarketL != 0L), // dw market sells & buys empty
-              dwList.marketBuys.isEmpty && dwList.marketSells.isEmpty                    // previous sells & buys empty
-            ) match {
-              case (false, _) => // calc bot is starting + normal situation
-                val x = dwMap
-                  .getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId))
-                  .copy(marketBuys = buys, marketSells = sells)
-                dwMap += (x.uniqueId -> x)
-                val ots =
-                  EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
-                processAndSend(ots)
-
-              case (true, _) => // dont calc when market changes
+            if (
+              buys.filter(p => p.qtyOnMarketL != 0L && p.priceOnMarket != 0.0).isEmpty &&
+              sells.filter(p => p.qtyOnMarketL != 0L && p.priceOnMarket != 0.0).isEmpty
+            ) ()
+            else {
+              val x = dwMap
+                .getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId))
+                .copy(marketBuys = buys, marketSells = sells)
+              dwMap += (x.uniqueId -> x)
+              val ots =
+                EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
+              processAndSend(ots)
             }
           })
 
@@ -389,11 +395,10 @@ trait Agent extends NativeTradingAgent {
                 .getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId))
                 .copy(ownBuyStatusesDefault =
                   if (s.buyStatuses(0).scenarioStatus == 65535)
-                    s.buyStatuses.filter(_ != null).map(toMyScenarioStatus).toVector
+                    s.buyStatuses.filter(_ != null).map(toMyScenarioStatus).toVector.flatten
                   else Vector.empty
                 )
               dwMap += (x.uniqueId -> x)
-              log.info(s"DW own default buys ${dwInstrument.getUniqueId} $x")
               val ots =
                 EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
               processAndSend(ots)
@@ -401,16 +406,14 @@ trait Agent extends NativeTradingAgent {
           source[AutomatonStatus]
             .get(exchange, "DEFAULT", dwInstrument.getUniqueId, "REFERENCE")
             .onUpdate(s => {
-
               val x = dwMap
                 .getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId))
                 .copy(ownSellStatusesDefault =
                   if (s.sellStatuses(0).scenarioStatus == 65535)
-                    s.sellStatuses.filter(_ != null).map(toMyScenarioStatus).toVector
+                    s.sellStatuses.filter(_ != null).map(toMyScenarioStatus).toVector.flatten
                   else Vector.empty
                 )
               dwMap += (x.uniqueId -> x)
-              log.info(s"DW own default sells ${dwInstrument.getUniqueId} $x")
               val ots =
                 EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
               processAndSend(ots)
@@ -423,11 +426,10 @@ trait Agent extends NativeTradingAgent {
                 .getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId))
                 .copy(ownBuyStatusesDynamic =
                   if (s.buyStatuses(0).scenarioStatus == 65535)
-                    s.buyStatuses.filter(_ != null).map(toMyScenarioStatus).toVector
+                    s.buyStatuses.filter(_ != null).map(toMyScenarioStatus).toVector.flatten
                   else Vector.empty
                 )
               dwMap += (x.uniqueId -> x)
-              log.info(s"DW own dynamic buys ${dwInstrument.getUniqueId} $x")
               val ots =
                 EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
               processAndSend(ots)
@@ -439,11 +441,10 @@ trait Agent extends NativeTradingAgent {
                 .getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId))
                 .copy(ownSellStatusesDynamic =
                   if (s.sellStatuses(0).scenarioStatus == 65535)
-                    s.sellStatuses.filter(_ != null).map(toMyScenarioStatus).toVector
+                    s.sellStatuses.filter(_ != null).map(toMyScenarioStatus).toVector.flatten
                   else Vector.empty
                 )
               dwMap += (x.uniqueId -> x)
-              log.info(s"DW own dynamic sells ${dwInstrument.getUniqueId} $x")
               val ots =
                 EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
               processAndSend(ots)

@@ -39,34 +39,44 @@ trait Controller extends NativeController {
       )
 
     case Start =>
-      source[Summary].get(ulInstrument).map(_.modeStr.get).onUpdate {
-        case s @ ("Pre-Open1" | "Pre-Open2" | "Pre-close") =>
-          log.info(s"Controller. UL Start bot Pre-open1/2/preclose  $s")
-          agent ! StartBot
+      source[Summary]
+        .get(ulInstrument)
+        .map(p => {
+          log.info(s"is null source ulinstrument ${ulInstrument.getUniqueId} ${p.modeStr} ")
+          p.modeStr.get
+        })
+        .onUpdate {
+          case s @ ("Pre-Open1" | "Pre-Open2" | "Pre-close") =>
+            log.info(s"Controller. UL ${ulInstrument.getUniqueId} Start bot Pre-open1/2/preclose  $s")
+            agent ! StartBot
 
-        case s @ _ =>
-          log.info(s"Controller. UL Stop bot $s")
-          agent ! StopBot
-      }
+          case s @ _ =>
+            log.info(s"Controller. UL ${ulInstrument.getUniqueId} Stop bot $s")
+            agent ! StopBot
+        }
 
       dictionaryService.getDictionary
         .getProducts(null)
         .values()
         .asScala
-        .filter(p => p.getProductType == ProductTypes.WARRANT)
+        .filter(_.getProductType == ProductTypes.WARRANT)
         .map(p => p.asInstanceOf[Derivative])
         .filter(d => d.getUlId == ulInstrument.getUniqueId)
         .foreach(d => {
           val dwInstrument = getService[InstrumentInfoService].getInstrumentByUniqueId(exchange, d.getId)
-          source[Summary].get(dwInstrument).map(_.modeStr.get).onUpdate {
-            case s @ ("Pre-Open1" | "Pre-Open2" | "Pre-close") =>
-              log.info(s"Controller. DW Start bot Pre-open1/2/preclose $s")
-              agent ! StartBot
 
-            case s @ _ =>
-              log.info(s"Controller. DW Stop bot $s")
-              agent ! StopBot
-          }
+          source[Summary]
+            .get(dwInstrument)
+            .map(_.modeStr.get)
+            .onUpdate {
+              case s @ ("Pre-Open1" | "Pre-Open2" | "Pre-close") =>
+                log.info(s"Controller. DW ${dwInstrument.getUniqueId} Start bot Pre-open1/2/preclose $s")
+                agent ! StartBot
+
+              case s @ _ =>
+                log.info(s"Controller. DW ${dwInstrument.getUniqueId} Stop bot $s")
+                agent ! StopBot
+            }
         })
   }
 }
