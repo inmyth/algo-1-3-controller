@@ -52,6 +52,7 @@ trait Controller extends NativeController {
 
           case s @ _ =>
             log.info(s"Controller. UL ${ulInstrument.getUniqueId} Stop bot $s")
+            Lock.gotStopBot = true
             agent ! StopBot
         }
 
@@ -75,6 +76,7 @@ trait Controller extends NativeController {
 
               case s @ _ =>
                 log.info(s"Controller. DW ${dwInstrument.getUniqueId} Stop bot $s")
+                Lock.gotStopBot = true
                 agent ! StopBot
             }
         })
