@@ -1,5 +1,11 @@
 package mrt
 
 object Lock {
-  var gotStopBot: Boolean = false
+  @volatile var stopBots: Set[String] = Set.empty
+
+  def getStopBot(ul: String): Boolean = stopBots.contains(ul)
+
+  def addStopBot(ul: String): Unit = stopBots = stopBots + ul
+
+  def removeStopBot(ul: String): Unit = stopBots = stopBots - ul
 }

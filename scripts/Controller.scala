@@ -48,11 +48,12 @@ trait Controller extends NativeController {
         .onUpdate {
           case s @ ("Pre-Open1" | "Pre-Open2" | "Pre-close") =>
             log.info(s"Controller. UL ${ulInstrument.getUniqueId} Start bot Pre-open1/2/preclose  $s")
+            Lock.removeStopBot(ulInstrument.getUniqueId)
             agent ! StartBot
 
           case s @ _ =>
             log.info(s"Controller. UL ${ulInstrument.getUniqueId} Stop bot $s")
-            Lock.gotStopBot = true
+            Lock.addStopBot(ulInstrument.getUniqueId)
             agent ! StopBot
         }
 
@@ -72,11 +73,12 @@ trait Controller extends NativeController {
             .onUpdate {
               case s @ ("Pre-Open1" | "Pre-Open2" | "Pre-close") =>
                 log.info(s"Controller. DW ${dwInstrument.getUniqueId} Start bot Pre-open1/2/preclose $s")
+                Lock.removeStopBot(ulInstrument.getUniqueId)
                 agent ! StartBot
 
               case s @ _ =>
                 log.info(s"Controller. DW ${dwInstrument.getUniqueId} Stop bot $s")
-                Lock.gotStopBot = true
+                Lock.addStopBot(ulInstrument.getUniqueId)
                 agent ! StopBot
             }
         })

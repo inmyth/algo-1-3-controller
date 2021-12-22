@@ -21,6 +21,7 @@ import com.ingalys.imc.summary.Summary
 import guardian.Algo.MyScenarioStatus
 import guardian.{Algo, Error}
 import guardian.Entities.{CustomId, Direction, OrderAction, PutCall}
+import guardian.Error.MarketError
 import horizontrader.plugins.hmm.connections.service.IDictionaryProvider
 import horizontrader.services.instruments.InstrumentInfoService
 
@@ -81,38 +82,42 @@ trait Agent extends NativeTradingAgent {
   def validatePositiveAmount(order: Order): Either[Error, Unit] =
     Either.cond(order.getQuantityL >= 0, (), Error.StateError("Agent e. Pre-process order qty cannot be negative"))
 
-  def sendOrderAction(act: OrderAction): Order = {
-    act match {
-      case OrderAction.InsertOrder(order, _) =>
-        log.info(s"Agent 1000. Send Insert Order $act")
-        sendLimitOrder(
-          instrument = ulInstrument,
-          way = order.getBuySell,
-          quantity = order.getQuantityL,
-          price = order.getPrice,
-          orderModifier = (o, _) => {
-            o.setCustomField(CustomId.field, CustomId.fromOrder(order).v)
-            o
-          }
-        )
+  def sendOrderAction(act: OrderAction): Unit =
+    if (!Lock.getStopBot(ulInstrument.getUniqueId)) {
+      act match {
+        case OrderAction.InsertOrder(order, _) =>
+          log.info(s"Agent 1000. Send Insert Order lock:${Lock.getStopBot(ulInstrument.getUniqueId)} $act")
+          sendLimitOrder(
+            instrument = ulInstrument,
+            way = order.getBuySell,
+            quantity = order.getQuantityL,
+            price = order.getPrice,
+            orderModifier = (o, _) => {
+              o.setCustomField(CustomId.field, CustomId.fromOrder(order).v)
+              o
+            }
+          )
 
-      case OrderAction.UpdateOrder(activeOrderDescriptorView, order) =>
-        log.info(s"Agent 1100. Send Update Order new qty: ${order.getQuantityL} new price: ${order.getPrice} $order")
-        updateOrder(
-          ulInstrument,
-          getOrderByUserData(activeOrderDescriptorView.getUserData).get.getOrderCopy.deepClone().asInstanceOf[Order],
-          (o, _) => {
-            o.setPrice(order.getPrice)
-            o.setQuantity(order.getQuantityL)
-            o
-          }
-        )
+        case OrderAction.UpdateOrder(activeOrderDescriptorView, order) =>
+          log.info(
+            s"Agent 1100. Send Update Order lock:${Lock
+              .getStopBot(ulInstrument.getUniqueId)} new qty: ${order.getQuantityL} new price: ${order.getPrice} $order"
+          )
+          updateOrder(
+            ulInstrument,
+            getOrderByUserData(activeOrderDescriptorView.getUserData).get.getOrderCopy.deepClone().asInstanceOf[Order],
+            (o, _) => {
+              o.setPrice(order.getPrice)
+              o.setQuantity(order.getQuantityL)
+              o
+            }
+          )
 
-      case OrderAction.CancelOrder(activeOrderDescriptorView, order) =>
-        log.info(s"Agent 1200. Send Cancel Order: $order")
-        deleteOrder(activeOrderDescriptorView)
+        case OrderAction.CancelOrder(activeOrderDescriptorView, order) =>
+          log.info(s"Agent 1200. Send Cancel Order lock:${Lock.getStopBot(ulInstrument.getUniqueId)} : $order")
+          deleteOrder(activeOrderDescriptorView)
+      }
     }
-  }
 
   def preProcess[F[_]: Monad]: EitherT[F, Error, Order] =
     for {
@@ -125,14 +130,14 @@ trait Agent extends NativeTradingAgent {
         }
       )
       dwList <- EitherT.rightT(dwMap.values.filter(p => {
-        log.info(
-          s"pre-predictionresidual projected price ${p.projectedPrice}, projected vol ${p.projectedVol}, market buys ${p.marketBuys}, market sells ${p.marketSells}, ownBuyStatusesDefault ${p.ownBuyStatusesDefault}, ownSellStatusesDefault ${p.ownBuyStatusesDefault}, ownBuyStatusesDynamic ${p.ownBuyStatusesDynamic}, ownSellStatusesDefault ${p.ownSellStatusesDynamic}"
-        )
+//        log.info(
+//          s"pre-predictionresidual projected price ${p.projectedPrice}, projected vol ${p.projectedVol}, market buys ${p.marketBuys}, market sells ${p.marketSells}, ownBuyStatusesDefault ${p.ownBuyStatusesDefault}, ownSellStatusesDefault ${p.ownBuyStatusesDefault}, ownBuyStatusesDynamic ${p.ownBuyStatusesDynamic}, ownSellStatusesDefault ${p.ownSellStatusesDynamic}"
+//        )
         p.projectedPrice.isDefined && BigDecimal(p.projectedPrice.get)
           .setScale(2, RoundingMode.HALF_EVEN) != BigDecimal("0") &&
-        p.projectedVol.isDefined && p.projectedVol.get != 0L && p.putCall.isDefined &&
-        (p.marketBuys.nonEmpty || p.marketSells.nonEmpty) &&
-        (p.ownBuyStatusesDefault.nonEmpty || p.ownSellStatusesDefault.nonEmpty || p.ownBuyStatusesDynamic.nonEmpty || p.ownSellStatusesDynamic.nonEmpty)
+          p.projectedVol.isDefined && p.projectedVol.get != 0L && p.putCall.isDefined &&
+          (p.marketBuys.nonEmpty || p.marketSells.nonEmpty) &&
+          (p.ownBuyStatusesDefault.nonEmpty || p.ownSellStatusesDefault.nonEmpty || p.ownBuyStatusesDynamic.nonEmpty || p.ownSellStatusesDynamic.nonEmpty)
       }))
       _ <- EitherT.rightT(log.info(s"Agent 1. Dw List: $dwList"))
       predictionResidual <- EitherT.rightT[F, guardian.Error](
@@ -179,8 +184,9 @@ trait Agent extends NativeTradingAgent {
   def processAndSend(c: EitherT[Id, Error, List[OrderAction]]): Unit =
     (for {
       oas <- c
-      send = if (Lock.gotStopBot || algo.isEmpty) List.empty[OrderAction] else oas
-      _ <- EitherT.right[Error](send.map(p => sendOrderAction(p).pure[Id]).sequence)
+      _ = log.info(s"Lock processandsend ${Lock.getStopBot(ulInstrument.getUniqueId)}")
+      send <- EitherT.cond[Id](!Lock.getStopBot(ulInstrument.getUniqueId), oas, MarketError("Agent. Force stop bot"))
+      _    <- EitherT.right[Error](send.map(p => sendOrderAction(p).pure[Id]).sequence)
     } yield ()).value match {
       case Right(_) => ()
       case Left(e) =>
