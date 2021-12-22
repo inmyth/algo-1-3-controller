@@ -36,17 +36,22 @@ trait Agent extends NativeTradingAgent {
   val ulInstrument: InstrumentDescriptor     //RBF@XBKK
   val hedgeInstrument: InstrumentDescriptor  //RBF@XBKK
   val dictionaryService: IDictionaryProvider // List of RBF@XBKK DW
-  val context                       = "DEFAULT"
-  val lotSize: Int                  = 100
-  val exchange                      = "SET-EMAPI-HMM-PROXY"
-  var algo: Option[Algo[Id]]        = None
-  var dwMap: Map[String, DW]        = Map.empty
-  var absoluteResidual: BigDecimal  = BigDecimal("0")
-  var pointValue: Double            = 1.0
-  var portfolioQty: Long            = 0L
-  var theoOpenPrice: Option[Double] = None
-  var lastPrice: Option[Double]     = None
-  var closePrevious: Option[Double] = None
+  val context                                      = "DEFAULT"
+  val lotSize: Int                                 = 100
+  val exchange                                     = "SET-EMAPI-HMM-PROXY"
+  var algo: Option[Algo[Id]]                       = None
+  var dwMap: Map[String, DW]                       = Map.empty
+  var ulAbsoluteResidual: BigDecimal               = BigDecimal("0")
+  var dwAbsoluteResiduals: Map[String, BigDecimal] = Map.empty
+  var absoluteResidual: BigDecimal                 = BigDecimal("0")
+  var dwPortfolios: Map[String, Long]              = Map.empty
+  var pointValue: Double                           = 1.0
+  var portfolioQty: Long                           = 0L
+  var theoOpenPrice: Option[Double]                = None
+  var lastPrice: Option[Double]                    = None
+  var closePrevious: Option[Double]                = None
+  var isUlPreClose: Boolean                        = false
+  var isDwPreCloses: Map[String, Boolean]          = Map.empty
 
   def toMyScenarioStatus(s: ScenarioStatus): Option[MyScenarioStatus] =
     Try {
@@ -228,6 +233,19 @@ trait Agent extends NativeTradingAgent {
       algo = None
   }
 
+  def sumAndProcessAbsoluteResiduals(): Unit = {
+    absoluteResidual = dwAbsoluteResiduals.values.sum + ulAbsoluteResidual
+    val ots = EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
+    processAndSend(ots)
+  }
+
+  def reset(): Unit = {
+    ulAbsoluteResidual = BigDecimal("0")
+    dwAbsoluteResiduals = Map.empty
+    absoluteResidual = BigDecimal("0")
+    dwPortfolios = Map.empty
+  }
+
   onMessage {
 
     case StartBot =>
@@ -237,6 +255,15 @@ trait Agent extends NativeTradingAgent {
       pointValue = Option(hedgeInstrument.getPointValue).map(_.doubleValue()).getOrElse(1.0)
       algo = if (algo.isEmpty) Some(initAlgo[Id](ulId)) else algo
 
+      source[Summary]
+        .get(ulInstrument)
+        .map(_.modeStr.get)
+        .onUpdate {
+          case "Pre-Open1" | "Pre-Open2" | "Pre-close" => isUlPreClose = true
+          case _ =>
+            isUlPreClose = false
+            reset()
+        }
       // UL Projected Price
       source[Summary]
         .get(ulInstrument)
@@ -268,34 +295,21 @@ trait Agent extends NativeTradingAgent {
           val ots = EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
           processAndSend(ots)
         })
-      // Portfolio qty
+      // Portfolio qty, Ul Absolute Residual
       source[RiskPositionDetailsContainer]
         .get(hedgePortfolio, ulInstrument.getUniqueId, true)
         .filter(p =>
           Option(p).isDefined && Option(p.getTotalPosition).isDefined && Option(p.getTotalPosition.getNetQty).isDefined
         )
-        .onUpdate(p => {
-          portfolioQty = p.getTotalPosition.getNetQty.toLong
-          log.info(s"Agent. portfolioQty: $portfolioQty")
-          algo.map(_.handleOnPortfolio(portfolioQty))
-          val ots = EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
-          processAndSend(ots)
-        })
-      // Absolute Residual
-      source[RiskPositionByULContainer]
-        .get(portfolioId, ulInstrument.getUniqueId, true)
-        .onUpdate(p => {
-          absoluteResidual =
-            if (p.getTotalPosition.getUlSpot == 0.0 || pointValue == 0.0) BigDecimal("0")
-            else {
-              log.info(s"Agent. getDeltaCashUlCurr: ${p.getTotalPosition.getDeltaCashUlCurr}")
-              log.info(s"Agent. getUlSpot: ${p.getTotalPosition.getUlSpot}")
-              BigDecimal(p.getTotalPosition.getDeltaCashUlCurr / p.getTotalPosition.getUlSpot / pointValue)
-            }
-          log.info(s"Agent. absoluteResidual: $absoluteResidual")
-          val ots = EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
-          processAndSend(ots)
-        })
+        .onUpdate(p =>
+          if (isUlPreClose) {
+            portfolioQty = p.getTotalPosition.getNetQty.toLong
+            ulAbsoluteResidual = portfolioQty
+            log.info(s"Agent. portfolioQty / ulAbsoluteResidual: $portfolioQty")
+            sumAndProcessAbsoluteResiduals()
+          }
+        )
+
       // DW
       dictionaryService.getDictionary
         .getProducts(null)
@@ -306,6 +320,7 @@ trait Agent extends NativeTradingAgent {
         })
         .map(p => p.asInstanceOf[Derivative])
         .filter(d => d.getUlId == ulId)
+        // Direction
         .foreach(d => {
           val dwInstrument = getService[InstrumentInfoService].getInstrumentByUniqueId(exchange, d.getId)
           val putCall = dictionaryService.getDictionary.getProduct(d.getId).asInstanceOf[Warrant].getOptionType match {
@@ -317,6 +332,62 @@ trait Agent extends NativeTradingAgent {
             uniqueId = dwInstrument.getUniqueId,
             putCall = putCall
           ))
+          // Pre-close flag
+          source[Summary]
+            .get(dwInstrument)
+            .map(_.modeStr.get)
+            .onUpdate {
+              case "Pre-Open1" | "Pre-Open2" | "Pre-close" => isDwPreCloses += (dwInstrument.getUniqueId -> true)
+              case _ =>
+                isDwPreCloses += (dwInstrument.getUniqueId -> false)
+                reset()
+            }
+          source[RiskPositionDetailsContainer]
+            .get(hedgePortfolio, dwInstrument.getUniqueId, true)
+            .onUpdate(p =>
+              if (isDwPreCloses.getOrElse(dwInstrument.getUniqueId, false)) {
+                (
+                  Option(p),
+                  Option(p.getTotalPosition),
+                  Option(p.getTotalPosition.getNetQty),
+                  Option(p.getTotalPosition.getDelta)
+                ) match {
+                  case (Some(_), Some(_), Some(qty), Some(delta)) =>
+                    if (!dwPortfolios.contains(dwInstrument.getUniqueId)) {
+                      dwPortfolios += (dwInstrument.getUniqueId -> qty.toLong)
+                    }
+                    val dwPortfolioQty = dwPortfolios(dwInstrument.getUniqueId)
+                    val deltaHedge     = delta
+                    val copy =
+                      dwMap
+                        .getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId))
+                        .copy(delta = Some(deltaHedge))
+                    dwMap += (copy.uniqueId -> copy)
+                    val dwAbsoluteResidual = BigDecimal(dwPortfolioQty * deltaHedge)
+                    log.info(
+                      s"Agent. DW ${dwInstrument.getUniqueId} portfolioQty: $portfolioQty DW deltaHedge: $deltaHedge DW AbsoluteResidual $dwAbsoluteResidual"
+                    )
+                    sumAndProcessAbsoluteResiduals()
+                }
+              }
+            )
+
+          // Delta
+          source[Pricing]
+            .get(dwInstrument.getUniqueId, "DEFAULT")
+            .filter(s => Option(s.delta).isDefined)
+            .onUpdate(s =>
+              if (dwMap.getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId)).delta.isEmpty) {
+                val x =
+                  dwMap.getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId)).copy(delta = Some(s.delta))
+                dwMap += (x.uniqueId -> x)
+                log.info(s"Agent. DW Pricing delta: ${dwInstrument.getUniqueId}, delta: ${s.delta}")
+                val ots =
+                  EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
+                processAndSend(ots)
+              }
+            )
+
           sSummary
             .get(dwInstrument)
             .onUpdate(s => {
@@ -347,20 +418,6 @@ trait Agent extends NativeTradingAgent {
               }
             })
 
-          // Delta
-          source[Pricing]
-            .get(dwInstrument.getUniqueId, "DEFAULT")
-            .filter(s => Option(s.delta).isDefined)
-            .onUpdate(s => {
-              val x =
-                dwMap.getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId)).copy(delta = Some(s.delta))
-              dwMap += (x.uniqueId -> x)
-              log.info(s"Agent. DW delta: ${dwInstrument.getUniqueId}, delta: ${s.delta}")
-              val ots =
-                EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
-              processAndSend(ots)
-            })
-
           // Market buys & sells
           val summaryDepth = source[Depth].get(dwInstrument)
           summaryDepth.onUpdate(d => {
@@ -376,12 +433,6 @@ trait Agent extends NativeTradingAgent {
               .filter(_ != null)
               .map(p => MyScenarioStatus(p.getPrice, p.getQuantityL))
               .toVector
-
-//            if (
-//              buys.filter(p => p.qtyOnMarketL != 0L && p.priceOnMarket != 0.0).isEmpty &&
-//              sells.filter(p => p.qtyOnMarketL != 0L && p.priceOnMarket != 0.0).isEmpty
-//            ) ()
-//            else {
             val x = dwMap
               .getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId))
               .copy(marketBuys = buys, marketSells = sells)
@@ -390,7 +441,6 @@ trait Agent extends NativeTradingAgent {
               EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
             log.info(s"Agent. DW market buys and sells: ${dwInstrument.getUniqueId} $x")
             processAndSend(ots)
-//            }
           })
 
           // Default Own order
