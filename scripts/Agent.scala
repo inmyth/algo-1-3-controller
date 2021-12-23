@@ -307,7 +307,6 @@ trait Agent extends NativeTradingAgent {
           algo.map(_.handleOnPortfolio(portfolioQty))
           if (isUlPreClose && ulAbsoluteResidual.isEmpty) {
             ulAbsoluteResidual = Some(portfolioQty)
-            isUlPreClose = false
             log.info(s"Agent. portfolioQty / ulAbsoluteResidual: $portfolioQty")
             sumAndProcessAbsoluteResiduals()
           }
