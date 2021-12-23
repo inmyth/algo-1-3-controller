@@ -244,6 +244,7 @@ trait Agent extends NativeTradingAgent {
     dwAbsoluteResiduals = Map.empty
     absoluteResidual = BigDecimal("0")
     dwPortfolios = Map.empty
+    dwAbsoluteResiduals = Map.empty
   }
 
   onMessage {
@@ -259,7 +260,7 @@ trait Agent extends NativeTradingAgent {
         .get(ulInstrument)
         .map(_.modeStr.get)
         .onUpdate {
-          case "Pre-Open1" | "Pre-Open2" | "Pre-close" => isUlPreClose = true
+          case "Open1" | "Pre-Open2" | "Pre-close" => isUlPreClose = true
           case _ =>
             isUlPreClose = false
             reset()
@@ -337,40 +338,40 @@ trait Agent extends NativeTradingAgent {
             .get(dwInstrument)
             .map(_.modeStr.get)
             .onUpdate {
-              case "Pre-Open1" | "Pre-Open2" | "Pre-close" => isDwPreCloses += (dwInstrument.getUniqueId -> true)
+              case "Open1" | "Pre-Open2" | "Pre-close" => isDwPreCloses += (dwInstrument.getUniqueId -> true)
               case _ =>
                 isDwPreCloses += (dwInstrument.getUniqueId -> false)
                 reset()
             }
           source[RiskPositionDetailsContainer]
-            .get(hedgePortfolio, dwInstrument.getUniqueId, true)
-            .onUpdate(p =>
-              if (isDwPreCloses.getOrElse(dwInstrument.getUniqueId, false)) {
-                (
-                  Option(p),
-                  Option(p.getTotalPosition),
-                  Option(p.getTotalPosition.getNetQty),
-                  Option(p.getTotalPosition.getDelta)
-                ) match {
-                  case (Some(_), Some(_), Some(qty), Some(delta)) =>
-                    if (!dwPortfolios.contains(dwInstrument.getUniqueId)) {
-                      dwPortfolios += (dwInstrument.getUniqueId -> qty.toLong)
-                    }
-                    val dwPortfolioQty = dwPortfolios(dwInstrument.getUniqueId)
-                    val deltaHedge     = delta
-                    val copy =
-                      dwMap
-                        .getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId))
-                        .copy(delta = Some(deltaHedge))
-                    dwMap += (copy.uniqueId -> copy)
-                    val dwAbsoluteResidual = BigDecimal(dwPortfolioQty * deltaHedge)
-                    log.info(
-                      s"Agent. DW ${dwInstrument.getUniqueId} portfolioQty: $portfolioQty DW deltaHedge: $deltaHedge DW AbsoluteResidual $dwAbsoluteResidual"
-                    )
-                    sumAndProcessAbsoluteResiduals()
+            .get(portfolioId, dwInstrument.getUniqueId, true)
+            .onUpdate(r => {
+              if (
+                isDwPreCloses.getOrElse(dwInstrument.getUniqueId, false) &&
+                (Option(r).isDefined && Option(r.getTotalPosition).isDefined &&
+                Option(r.getTotalPosition.getNetQty).isDefined &&
+                Option(r.getTotalPosition.getDelta).isDefined)
+              ) {
+                val qty   = r.getTotalPosition.getNetQty
+                val delta = r.getTotalPosition.getDelta
+                log.info(
+                  s"Agent. DW ${dwInstrument.getUniqueId} portfolioQty: $qty DW deltaHedge: $delta DW AbsoluteResidual ${qty * delta}"
+                )
+                if (!dwPortfolios.contains(dwInstrument.getUniqueId)) {
+                  dwPortfolios += (dwInstrument.getUniqueId -> qty.toLong)
                 }
+                val dwPortfolioQty = dwPortfolios(dwInstrument.getUniqueId)
+                val deltaHedge     = delta
+                val copy =
+                  dwMap
+                    .getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId))
+                    .copy(delta = Some(deltaHedge))
+                dwMap += (copy.uniqueId -> copy)
+                val dwAbsoluteResidual = BigDecimal(dwPortfolioQty * deltaHedge)
+                dwAbsoluteResiduals += (dwInstrument.getUniqueId -> dwAbsoluteResidual)
+                sumAndProcessAbsoluteResiduals()
               }
-            )
+            })
 
           // Delta
           source[Pricing]
