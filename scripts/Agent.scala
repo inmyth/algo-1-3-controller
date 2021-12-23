@@ -41,7 +41,7 @@ trait Agent extends NativeTradingAgent {
   val exchange                                     = "SET-EMAPI-HMM-PROXY"
   var algo: Option[Algo[Id]]                       = None
   var dwMap: Map[String, DW]                       = Map.empty
-  var ulAbsoluteResidual: BigDecimal               = BigDecimal("0")
+  var ulAbsoluteResidual: Option[BigDecimal]       = None
   var dwAbsoluteResiduals: Map[String, BigDecimal] = Map.empty
   var absoluteResidual: BigDecimal                 = BigDecimal("0")
   var dwPortfolios: Map[String, Long]              = Map.empty
@@ -234,13 +234,13 @@ trait Agent extends NativeTradingAgent {
   }
 
   def sumAndProcessAbsoluteResiduals(): Unit = {
-    absoluteResidual = dwAbsoluteResiduals.values.sum + ulAbsoluteResidual
+    absoluteResidual = dwAbsoluteResiduals.values.sum + ulAbsoluteResidual.getOrElse(BigDecimal("0"))
     val ots = EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
     processAndSend(ots)
   }
 
   def reset(): Unit = {
-    ulAbsoluteResidual = BigDecimal("0")
+    ulAbsoluteResidual = None
     dwAbsoluteResiduals = Map.empty
     absoluteResidual = BigDecimal("0")
     dwPortfolios = Map.empty
@@ -260,7 +260,7 @@ trait Agent extends NativeTradingAgent {
         .get(ulInstrument)
         .map(_.modeStr.get)
         .onUpdate {
-          case "Open1" | "Pre-Open2" | "Pre-close" => isUlPreClose = true
+          case "Pre-Open1" | "Pre-Open2" | "Pre-close" => isUlPreClose = true
           case _ =>
             isUlPreClose = false
             reset()
@@ -302,15 +302,16 @@ trait Agent extends NativeTradingAgent {
         .filter(p =>
           Option(p).isDefined && Option(p.getTotalPosition).isDefined && Option(p.getTotalPosition.getNetQty).isDefined
         )
-        .onUpdate(p =>
-          if (isUlPreClose) {
-            portfolioQty = p.getTotalPosition.getNetQty.toLong
-            ulAbsoluteResidual = portfolioQty
+        .onUpdate(p => {
+          portfolioQty = p.getTotalPosition.getNetQty.toLong
+          algo.map(_.handleOnPortfolio(portfolioQty))
+          if (isUlPreClose && ulAbsoluteResidual.isEmpty) {
+            ulAbsoluteResidual = Some(portfolioQty)
+            isUlPreClose = false
             log.info(s"Agent. portfolioQty / ulAbsoluteResidual: $portfolioQty")
             sumAndProcessAbsoluteResiduals()
           }
-        )
-
+        })
       // DW
       dictionaryService.getDictionary
         .getProducts(null)
@@ -338,7 +339,7 @@ trait Agent extends NativeTradingAgent {
             .get(dwInstrument)
             .map(_.modeStr.get)
             .onUpdate {
-              case "Open1" | "Pre-Open2" | "Pre-close" => isDwPreCloses += (dwInstrument.getUniqueId -> true)
+              case "Pre-Open1" | "Pre-Open2" | "Pre-close" => isDwPreCloses += (dwInstrument.getUniqueId -> true)
               case _ =>
                 isDwPreCloses += (dwInstrument.getUniqueId -> false)
                 reset()
