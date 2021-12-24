@@ -231,9 +231,11 @@ trait Agent extends NativeTradingAgent {
   }
 
   def sumAndProcessAbsoluteResiduals(): Unit = {
-    absoluteResidual = dwAbsoluteResiduals.values.sum + ulAbsoluteResidual.getOrElse(BigDecimal("0"))
-    val ots = EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
-    processAndSend(ots)
+    if (dwAbsoluteResiduals.nonEmpty && ulAbsoluteResidual.isDefined) { // to prevent sell all in portfolio
+      absoluteResidual = dwAbsoluteResiduals.values.sum + ulAbsoluteResidual.getOrElse(BigDecimal("0"))
+      val ots = EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
+      processAndSend(ots)
+    }
   }
 
   def reset(): Unit = {
