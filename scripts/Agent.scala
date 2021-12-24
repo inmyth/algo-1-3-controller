@@ -135,9 +135,6 @@ trait Agent extends NativeTradingAgent {
         }
       )
       dwList <- EitherT.rightT(dwMap.values.filter(p => {
-//        log.info(
-//          s"pre-predictionresidual projected price ${p.projectedPrice}, projected vol ${p.projectedVol}, market buys ${p.marketBuys}, market sells ${p.marketSells}, ownBuyStatusesDefault ${p.ownBuyStatusesDefault}, ownSellStatusesDefault ${p.ownBuyStatusesDefault}, ownBuyStatusesDynamic ${p.ownBuyStatusesDynamic}, ownSellStatusesDefault ${p.ownSellStatusesDynamic}"
-//        )
         p.projectedPrice.isDefined && BigDecimal(p.projectedPrice.get)
           .setScale(2, RoundingMode.HALF_EVEN) != BigDecimal("0") &&
           p.projectedVol.isDefined && p.projectedVol.get != 0L && p.putCall.isDefined &&
@@ -260,7 +257,7 @@ trait Agent extends NativeTradingAgent {
         .get(ulInstrument)
         .map(_.modeStr.get)
         .onUpdate {
-          case "Pre-Open1" | "Pre-Open2" | "Pre-close" => isUlPreClose = true
+          case "Open1" | "Pre-Open2" | "Pre-close" => isUlPreClose = true
           case _ =>
             isUlPreClose = false
             reset()
@@ -338,7 +335,7 @@ trait Agent extends NativeTradingAgent {
             .get(dwInstrument)
             .map(_.modeStr.get)
             .onUpdate {
-              case "Pre-Open1" | "Pre-Open2" | "Pre-close" => isDwPreCloses += (dwInstrument.getUniqueId -> true)
+              case "Open1" | "Pre-Open2" | "Pre-close" => isDwPreCloses += (dwInstrument.getUniqueId -> true)
               case _ =>
                 isDwPreCloses += (dwInstrument.getUniqueId -> false)
                 reset()
@@ -361,7 +358,7 @@ trait Agent extends NativeTradingAgent {
                   dwPortfolios += (dwInstrument.getUniqueId -> qty.toLong)
                 }
                 val dwPortfolioQty = dwPortfolios(dwInstrument.getUniqueId)
-                val deltaHedge     = delta
+                val deltaHedge     = delta //can be zero, is it ok to calculate when delta is zero ?
                 val copy =
                   dwMap
                     .getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId))
@@ -377,17 +374,24 @@ trait Agent extends NativeTradingAgent {
           source[Pricing]
             .get(dwInstrument.getUniqueId, "DEFAULT")
             .filter(s => Option(s.delta).isDefined)
-            .onUpdate(s =>
-              if (dwMap.getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId)).delta.isEmpty) {
-                val x =
-                  dwMap.getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId)).copy(delta = Some(s.delta))
-                dwMap += (x.uniqueId -> x)
-                log.info(s"Agent. DW Pricing delta: ${dwInstrument.getUniqueId}, delta: ${s.delta}")
-                val ots =
-                  EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
-                processAndSend(ots)
+            .onUpdate(s => {
+              val d = dwMap.getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId))
+              (
+                d.delta.isEmpty,
+                d.delta
+                  .map(p => BigDecimal(p).setScale(2, RoundingMode.HALF_EVEN))
+                  .getOrElse(BigDecimal("0")) == BigDecimal("0")
+              ) match {
+                case (true, _) | (_, true) =>
+                  val x =
+                    dwMap.getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId)).copy(delta = Some(s.delta))
+                  dwMap += (x.uniqueId -> x)
+                  log.info(s"Agent. DW Pricing delta: ${dwInstrument.getUniqueId}, delta: ${s.delta}")
+                  val ots =
+                    EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
+                  processAndSend(ots)
               }
-            )
+            })
 
           sSummary
             .get(dwInstrument)
