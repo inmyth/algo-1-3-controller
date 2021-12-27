@@ -259,7 +259,7 @@ trait Agent extends NativeTradingAgent {
         .get(ulInstrument)
         .map(_.modeStr.get)
         .onUpdate {
-          case "Open1" | "Pre-Open2" | "Pre-close" => isUlPreClose = true
+          case "Pre-Open1" | "Pre-Open2" | "Pre-close" => isUlPreClose = true
           case _ =>
             isUlPreClose = false
             reset()
@@ -337,7 +337,7 @@ trait Agent extends NativeTradingAgent {
             .get(dwInstrument)
             .map(_.modeStr.get)
             .onUpdate {
-              case "Open1" | "Pre-Open2" | "Pre-close" => isDwPreCloses += (dwInstrument.getUniqueId -> true)
+              case "Pre-Open1" | "Pre-Open2" | "Pre-close" => isDwPreCloses += (dwInstrument.getUniqueId -> true)
               case _ =>
                 isDwPreCloses += (dwInstrument.getUniqueId -> false)
                 reset()
@@ -382,7 +382,7 @@ trait Agent extends NativeTradingAgent {
                 d.delta.isEmpty,
                 d.delta
                   .map(p => BigDecimal(p).setScale(2, RoundingMode.HALF_EVEN))
-                  .getOrElse(BigDecimal("0")) == BigDecimal("0")
+                  .getOrElse(BigDecimal("0")) == BigDecimal("0") // delta == 0
               ) match {
                 case (true, _) | (_, true) =>
                   val x =
@@ -392,6 +392,8 @@ trait Agent extends NativeTradingAgent {
                   val ots =
                     EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
                   processAndSend(ots)
+
+                case _ => ()
               }
             })
 

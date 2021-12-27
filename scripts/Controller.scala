@@ -42,11 +42,10 @@ trait Controller extends NativeController {
       source[Summary]
         .get(ulInstrument)
         .map(p => {
-          log.info(s"is null source ulinstrument ${ulInstrument.getUniqueId} ${p.modeStr} ")
           p.modeStr.get
         })
         .onUpdate {
-          case s @ ("Open1" | "Pre-Open2" | "Pre-close") =>
+          case s @ ("Pre-Open1" | "Pre-Open2" | "Pre-close") =>
             log.info(s"Controller. UL ${ulInstrument.getUniqueId} Start bot Pre-open1/2/preclose  $s")
             Lock.removeStopBot(ulInstrument.getUniqueId)
             agent ! StartBot
@@ -71,7 +70,7 @@ trait Controller extends NativeController {
             .get(dwInstrument)
             .map(_.modeStr.get)
             .onUpdate {
-              case s @ ("Open1" | "Pre-Open2" | "Pre-close") =>
+              case s @ ("Pre-Open1" | "Pre-Open2" | "Pre-close") =>
                 log.info(s"Controller. DW ${dwInstrument.getUniqueId} Start bot Pre-open1/2/preclose $s")
                 Lock.removeStopBot(ulInstrument.getUniqueId)
                 agent ! StartBot
