@@ -259,7 +259,7 @@ trait Agent extends NativeTradingAgent {
         .get(ulInstrument)
         .map(_.modeStr.get)
         .onUpdate {
-          case "Pre-Open1" | "Pre-Open2" | "Pre-close" => isUlPreClose = true
+          case "Pre-close" => isUlPreClose = true
           case _ =>
             isUlPreClose = false
             reset()
@@ -337,7 +337,7 @@ trait Agent extends NativeTradingAgent {
             .get(dwInstrument)
             .map(_.modeStr.get)
             .onUpdate {
-              case "Pre-Open1" | "Pre-Open2" | "Pre-close" => isDwPreCloses += (dwInstrument.getUniqueId -> true)
+              case "Pre-close" => isDwPreCloses += (dwInstrument.getUniqueId -> true)
               case _ =>
                 isDwPreCloses += (dwInstrument.getUniqueId -> false)
                 reset()
@@ -352,7 +352,7 @@ trait Agent extends NativeTradingAgent {
                 Option(r.getTotalPosition.getDelta).isDefined)
               ) {
                 val qty   = r.getTotalPosition.getNetQty
-                val delta = r.getTotalPosition.getDelta
+                val delta = r.getTotalPosition.getDelta // delta hedge
                 log.info(
                   s"Agent. DW ${dwInstrument.getUniqueId} portfolioQty: $qty DW deltaHedge: $delta DW AbsoluteResidual ${qty * delta}"
                 )
@@ -372,7 +372,7 @@ trait Agent extends NativeTradingAgent {
               }
             })
 
-          // Delta
+          // Delta pricing
           source[Pricing]
             .get(dwInstrument.getUniqueId, "DEFAULT")
             .filter(s => Option(s.delta).isDefined)
@@ -381,7 +381,7 @@ trait Agent extends NativeTradingAgent {
               (
                 d.delta.isEmpty,
                 d.delta
-                  .map(p => BigDecimal(p).setScale(2, RoundingMode.HALF_EVEN))
+                  .map(p => BigDecimal(p).setScale(16, RoundingMode.HALF_EVEN))
                   .getOrElse(BigDecimal("0")) == BigDecimal("0") // delta == 0
               ) match {
                 case (true, _) | (_, true) =>

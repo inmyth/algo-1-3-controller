@@ -17,6 +17,7 @@ This happens when EitherT composition is missing type. I solved this by reducing
 - in case of runtime error Horizon will stop sending signals
 - a market order from Horizon can be missing one leg, this causes the bot to cancel an order
 - ScenarioStatus can be null, its fields like priceOnMarket and qtyOnMarket can be null or NaN
+- horizon delta precision is 15 (e.g 7.072637332864818E-4)
 - object is shared between traits (and ul)
 ```
 marketSells Vector(MyScenarioStatus(0.18,35400), MyScenarioStatus(0.19,1056500), MyScenarioStatus(0.2,1032500), MyScenarioStatus(0.21,1020900), MyScenarioStatus(0.22,1042400))
@@ -34,8 +35,10 @@ SEQ
 3.Reset DW Market Buy Sell
 4.1 Update Dynamic Own Sell
 4.2 Update Dynamic Own Buy
+- own can have more qty and price level that doesnt exist in market 
 
-- [] stop the bot when dw opens before ul (executed signal)
+- [x] stop the bot when dw opens before ul (executed signal)
+
 
 ## Creating new Gradle project
 1. Horizon > create new strategy > Generate IDEA files 
