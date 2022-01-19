@@ -139,7 +139,13 @@ trait Agent extends NativeTradingAgent {
           .setScale(2, RoundingMode.HALF_EVEN) != BigDecimal("0") &&
           p.projectedVol.isDefined && p.projectedVol.get != 0L && p.putCall.isDefined &&
           (p.marketBuys.nonEmpty || p.marketSells.nonEmpty) &&
-          (p.ownBuyStatusesDefault.nonEmpty || p.ownSellStatusesDefault.nonEmpty || p.ownBuyStatusesDynamic.nonEmpty || p.ownSellStatusesDynamic.nonEmpty)
+          (p.ownBuyStatusesDefault.nonEmpty || p.ownSellStatusesDefault.nonEmpty || p.ownBuyStatusesDynamic.nonEmpty || p.ownSellStatusesDynamic.nonEmpty) &&
+          !(
+            p.ownSellStatusesDynamic.exists(q => q.qtyOnMarketL == 0L) ||
+              p.ownBuyStatusesDynamic.exists(q => q.qtyOnMarketL == 0L) ||
+              p.ownBuyStatusesDefault.exists(q => q.qtyOnMarketL == 0L) ||
+              p.ownSellStatusesDefault.exists(q => q.qtyOnMarketL == 0L)
+          )
       }))
       _ <- EitherT.rightT(log.info(s"Agent 1. Dw List: $dwList"))
       predictionResidual <- EitherT.rightT[F, guardian.Error](
