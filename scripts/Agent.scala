@@ -167,6 +167,8 @@ trait Agent extends NativeTradingAgent {
           )
           .sum
       )
+      // if dwlist is empty then use previous predictionresidual
+      // save predidction residual
       _ <- EitherT.rightT(log.info(s"Agent 3. Prediction residual: $predictionResidual"))
       reversedAbsoluteResidual = absoluteResidual.toLong * -1
       _ <- EitherT.rightT(log.info(s"Agent 4. Absolute residual: $reversedAbsoluteResidual"))
@@ -268,7 +270,7 @@ trait Agent extends NativeTradingAgent {
           case "Pre-close" => isUlPreClose = true
           case _ =>
             isUlPreClose = false
-            reset()
+//            reset()
         }
       // UL Projected Price
       source[Summary]
@@ -346,7 +348,7 @@ trait Agent extends NativeTradingAgent {
               case "Pre-close" => isDwPreCloses += (dwInstrument.getUniqueId -> true)
               case _ =>
                 isDwPreCloses += (dwInstrument.getUniqueId -> false)
-                reset()
+//                reset()
             }
           source[RiskPositionDetailsContainer]
             .get(portfolioId, dwInstrument.getUniqueId, true)
@@ -468,6 +470,10 @@ trait Agent extends NativeTradingAgent {
                   if (s.buyStatuses(0).scenarioStatus == 65535)
                     s.buyStatuses.filter(_ != null).map(toMyScenarioStatus).toVector.flatten
                   else Vector.empty
+                //  Map[Long, ScenarioStatus]
+                // Map(A -> 4, B -> 5) + Map(A -> 0, B ->1) = ??? Map(A -> 4, B -> 5) or Map(A- > 0, B -> 1)
+                // More Function  ProjQty ==8 if Sum Prev Map(A -> 4, B -> 5) - Sum New Map(Z -> 1, A -> 0, B ->2) == ProjQty
+                // then Use Sum Prev Else Use Sum New
                 )
               dwMap += (x.uniqueId -> x)
               val ots =
