@@ -1,34 +1,33 @@
 package mrt
 
-import horizontrader.services.instruments.InstrumentDescriptor
-import algotrader.api.{NativeTradingAgent, TrxMessages}
 import algotrader.api.Messages._
 import algotrader.api.source.depth.DepthSourceBuilder
 import algotrader.api.source.summary._
-import com.ingalys.imc.BuySell
-import cats.{Applicative, Id, Monad}
+import algotrader.api.{NativeTradingAgent, TrxMessages}
 import cats.data.EitherT
 import cats.implicits.{catsSyntaxApplicativeId, toTraverseOps}
+import cats.{Applicative, Id, Monad}
 import com.hsoft.datamaster.product.{Derivative, ProductTypes, Warrant}
 import com.hsoft.hmm.api.source.automatonstatus.AutomatonStatus
-import com.hsoft.hmm.api.source.position.{RiskPositionByUlSourceBuilder, RiskPositionDetailsSourceBuilder}
+import com.hsoft.hmm.api.source.position.RiskPositionDetailsSourceBuilder
 import com.hsoft.hmm.api.source.pricing.{Pricing, PricingSourceBuilder}
-import com.hsoft.hmm.posman.api.position.container.{RiskPositionByULContainer, RiskPositionDetailsContainer}
+import com.hsoft.hmm.posman.api.position.container.RiskPositionDetailsContainer
 import com.hsoft.scenario.status.ScenarioStatus
+import com.ingalys.imc.BuySell
 import com.ingalys.imc.depth.Depth
 import com.ingalys.imc.order.Order
 import com.ingalys.imc.summary.Summary
 import guardian.Algo.MyScenarioStatus
-import guardian.{Algo, Error}
 import guardian.Entities.{CustomId, Direction, OrderAction, PutCall}
 import guardian.Error.MarketError
+import guardian.{Algo, Error}
 import horizontrader.plugins.hmm.connections.service.IDictionaryProvider
-import horizontrader.services.instruments.InstrumentInfoService
+import horizontrader.services.instruments.{InstrumentDescriptor, InstrumentInfoService}
 
 import scala.collection.JavaConverters._
 import scala.language.higherKinds
 import scala.math.BigDecimal.RoundingMode
-import scala.util.{Failure, Success, Try}
+import scala.util.Try
 
 trait Agent extends NativeTradingAgent {
   val portfolioId: String                    //JV
