@@ -246,14 +246,6 @@ trait Agent extends NativeTradingAgent {
     }
   }
 
-  def reset(): Unit = {
-    ulAbsoluteResidual = None
-    dwAbsoluteResiduals = Map.empty
-    absoluteResidual = BigDecimal("0")
-    dwPortfolios = Map.empty
-    dwAbsoluteResiduals = Map.empty
-  }
-
   onMessage {
 
     case StartBot =>
@@ -268,9 +260,7 @@ trait Agent extends NativeTradingAgent {
         .map(_.modeStr.get)
         .onUpdate {
           case "Pre-close" => isUlPreClose = true
-          case _ =>
-            isUlPreClose = false
-//            reset()
+          case _           => isUlPreClose = false
         }
       // UL Projected Price
       source[Summary]
@@ -346,9 +336,7 @@ trait Agent extends NativeTradingAgent {
             .map(_.modeStr.get)
             .onUpdate {
               case "Pre-close" => isDwPreCloses += (dwInstrument.getUniqueId -> true)
-              case _ =>
-                isDwPreCloses += (dwInstrument.getUniqueId -> false)
-//                reset()
+              case _           => isDwPreCloses += (dwInstrument.getUniqueId -> false)
             }
           source[RiskPositionDetailsContainer]
             .get(portfolioId, dwInstrument.getUniqueId, true)
