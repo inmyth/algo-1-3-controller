@@ -138,13 +138,7 @@ trait Agent extends NativeTradingAgent {
           .setScale(2, RoundingMode.HALF_EVEN) != BigDecimal("0") &&
           p.projectedVol.isDefined && p.projectedVol.get != 0L && p.putCall.isDefined &&
           (p.marketBuys.nonEmpty || p.marketSells.nonEmpty) &&
-          (p.ownBuyStatusesDefault.nonEmpty || p.ownSellStatusesDefault.nonEmpty || p.ownBuyStatusesDynamic.nonEmpty || p.ownSellStatusesDynamic.nonEmpty) &&
-          !(
-            p.ownSellStatusesDynamic.exists(q => q.qtyOnMarketL == 0L) ||
-              p.ownBuyStatusesDynamic.exists(q => q.qtyOnMarketL == 0L) ||
-              p.ownBuyStatusesDefault.exists(q => q.qtyOnMarketL == 0L) ||
-              p.ownSellStatusesDefault.exists(q => q.qtyOnMarketL == 0L)
-          )
+          (p.ownBuyStatusesDefault.nonEmpty || p.ownSellStatusesDefault.nonEmpty || p.ownBuyStatusesDynamic.nonEmpty || p.ownSellStatusesDynamic.nonEmpty)
       }))
       _ <- EitherT.rightT(log.info(s"Agent 1. Dw List: $dwList"))
       predictionResidual <- EitherT.rightT[F, guardian.Error](
@@ -467,7 +461,7 @@ trait Agent extends NativeTradingAgent {
                 EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
               log.info(s"Agent. DW default own buys: ${dwInstrument.getUniqueId} $x")
 
-              processAndSend(ots)
+//              processAndSend(ots)
             })
           source[AutomatonStatus]
             .get(exchange, "DEFAULT", dwInstrument.getUniqueId, "REFERENCE")
@@ -484,7 +478,7 @@ trait Agent extends NativeTradingAgent {
                 EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
               log.info(s"Agent. DW default own sells: ${dwInstrument.getUniqueId} $x")
 
-              processAndSend(ots)
+//              processAndSend(ots)
             })
           // Dynamic Own order
           source[AutomatonStatus]
@@ -502,7 +496,7 @@ trait Agent extends NativeTradingAgent {
                 EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
               log.info(s"Agent. DW dynamic own buys: ${dwInstrument.getUniqueId} $x")
 
-              processAndSend(ots)
+//              processAndSend(ots)
             })
           source[AutomatonStatus]
             .get(exchange, "DYNAMIC", dwInstrument.getUniqueId, "REFERENCE")
@@ -519,7 +513,7 @@ trait Agent extends NativeTradingAgent {
                 EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
               log.info(s"Agent. DW dynamic own sells: ${dwInstrument.getUniqueId} $x")
 
-              processAndSend(ots)
+//              processAndSend(ots)
             })
         })
 
