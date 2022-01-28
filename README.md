@@ -19,6 +19,7 @@ This happens when EitherT composition is missing type. I solved this by reducing
 - ScenarioStatus can be null, its fields like priceOnMarket and qtyOnMarket can be null or NaN
 - horizon delta precision is 15 (e.g 7.072637332864818E-4)
 - object is shared between traits (and ul)
+- disabling processAndSend is not enough to stop recalculation on own order change, we have to disable handleOnSignal too, if not the bot will create a pending order byt not send it
 ```
 marketSells Vector(MyScenarioStatus(0.18,35400), MyScenarioStatus(0.19,1056500), MyScenarioStatus(0.2,1032500), MyScenarioStatus(0.21,1020900), MyScenarioStatus(0.22,1042400))
 marketSells Vector(MyScenarioStatus(0.19,1056500), MyScenarioStatus(0.2,1032500), MyScenarioStatus(0.21,1020900), MyScenarioStatus(0.22,1042400))

@@ -1,4 +1,4 @@
-strategy.version.minor=3
+strategy.version.minor=4
 strategy.description=
 strategy.version.major=0
 strategy.author=

@@ -1,4 +1,4 @@
-package mrt
+package hedger13v1
 
 import algotrader.api.Messages._
 import algotrader.api.source.depth.DepthSourceBuilder
@@ -457,11 +457,11 @@ trait Agent extends NativeTradingAgent {
                 // then Use Sum Prev Else Use Sum New
                 )
               dwMap += (x.uniqueId -> x)
-              val ots =
-                EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
+              //              val ots =
+              //                EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
               log.info(s"Agent. DW default own buys: ${dwInstrument.getUniqueId} $x")
 
-//              processAndSend(ots)
+              //              processAndSend(ots)
             })
           source[AutomatonStatus]
             .get(exchange, "DEFAULT", dwInstrument.getUniqueId, "REFERENCE")
@@ -474,11 +474,11 @@ trait Agent extends NativeTradingAgent {
                   else Vector.empty
                 )
               dwMap += (x.uniqueId -> x)
-              val ots =
-                EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
+              //              val ots =
+              //                EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
               log.info(s"Agent. DW default own sells: ${dwInstrument.getUniqueId} $x")
 
-//              processAndSend(ots)
+              //              processAndSend(ots)
             })
           // Dynamic Own order
           source[AutomatonStatus]
@@ -492,11 +492,11 @@ trait Agent extends NativeTradingAgent {
                   else Vector.empty
                 )
               dwMap += (x.uniqueId -> x)
-              val ots =
-                EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
+              //              val ots =
+              //                EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
               log.info(s"Agent. DW dynamic own buys: ${dwInstrument.getUniqueId} $x")
 
-//              processAndSend(ots)
+              //              processAndSend(ots)
             })
           source[AutomatonStatus]
             .get(exchange, "DYNAMIC", dwInstrument.getUniqueId, "REFERENCE")
@@ -509,11 +509,11 @@ trait Agent extends NativeTradingAgent {
                   else Vector.empty
                 )
               dwMap += (x.uniqueId -> x)
-              val ots =
-                EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
+              //              val ots =
+              //                EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
               log.info(s"Agent. DW dynamic own sells: ${dwInstrument.getUniqueId} $x")
 
-//              processAndSend(ots)
+              //              processAndSend(ots)
             })
         })
 
