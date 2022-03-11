@@ -29,6 +29,7 @@ marketSells Vector(MyScenarioStatus(0.19,1056500), MyScenarioStatus(0.2,1032500)
 Dw List: List(DW(CPAL24C2203A@XBKK,Some(0.25),Some(300000),Some(0.040089664162088465),Some(CALL),Vector(MyScenarioStatus(0.24,36000), MyScenarioStatus(0.25,1010600), MyScenarioStatus(0.26,1088900), MyScenarioStatus(0.27,1025200), MyScenarioStatus(0.28,1048800)),Vector(MyScenarioStatus(0.25,300000), MyScenarioStatus(0.24,100000), MyScenarioStatus(0.23,36000), MyScenarioStatus(0.22,1070900), MyScenarioStatus(0.21,1061800)),Vector(MyScenarioStatus(0.27,1025200), MyScenarioStatus(0.28,1048800), MyScenarioStatus(0.29,1016300), MyScenarioStatus(0.25,1010600), MyScenarioStatus(0.26,1088900)),Vector(MyScenarioStatus(0.21,1061800), MyScenarioStatus(0.20,1090400), MyScenarioStatus(0.19,1009800), MyScenarioStatus(0.18,1018100), MyScenarioStatus(0.22,1070900)),Vector(MyScenarioStatus(0.24,36000)),Vector(MyScenarioStatus(0.23,36000))))
 Dw List: List(DW(CPAL24C2203A@XBKK,Some(0.25),Some(300000),Some(0.040089664162088465),Some(CALL),Vector(MyScenarioStatus(0.24,36000), MyScenarioStatus(0.25,1010600), MyScenarioStatus(0.26,1088900), MyScenarioStatus(0.27,1025200), MyScenarioStatus(0.28,1048800)),Vector(MyScenarioStatus(0.25,300000), MyScenarioStatus(0.24,100000), MyScenarioStatus(0.23,36000), MyScenarioStatus(0.22,1070900), MyScenarioStatus(0.21,1061800)),Vector(MyScenarioStatus(0.27,1025200), MyScenarioStatus(0.28,1048800), MyScenarioStatus(0.29,1016300), MyScenarioStatus(0.25,1010600), MyScenarioStatus(0.26,1088900)),Vector(MyScenarioStatus(0.21,1061800), MyScenarioStatus(0.20,1090400), MyScenarioStatus(0.19,1009800), MyScenarioStatus(0.18,1018100), MyScenarioStatus(0.22,1070900)),Vector(MyScenarioStatus(0.24,0)),Vector(MyScenarioStatus(0.23,36000))))
 ```
+- market status will arrive in source[Summary]'s onUpdate even if the market status does not change. It will return the current status.  
 - change from pre open to open
 SEQ
 1.DW Stop Bot Signal
@@ -36,7 +37,15 @@ SEQ
 3.Reset DW Market Buy Sell
 4.1 Update Dynamic Own Sell
 4.2 Update Dynamic Own Buy
-- own can have more qty and price level that doesnt exist in market 
+- own can have more qty and price level that doesnt exist in market
+- if dw's theopenprice or theopenvol is different then cached dw projected price and vol then it will recalculate (fix 20220311)
+- disable recalculation when dw market buys&sells change (fix 20220311)
+- to calculate prediction residual we only use 24C or 24P (fix 20220311)
+- we now use portfolio id to get ul absolute residual (fix 20220311)
+- we use hedgePortfolio as portfolio cache (fix 20220311)
+- send and update order use hedgePortfolio explicitly (fix 20220311)
+- load everything when flag = pre-close (fix 20220311)
+- disable recalculation in dw market buys & sells updates (fix 20220311)
 
 - [x] stop the bot when dw opens before ul (executed signal)
 
