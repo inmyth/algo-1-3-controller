@@ -396,13 +396,16 @@ trait Agent extends NativeTradingAgent {
 
               (s.theoOpenPrice, s.theoOpenVolume) match {
                 case (Some(_), Some(_)) =>
-                  val x = dwMap // Array, Set, Map(key, value)
-                    .getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId))
-                    .copy(projectedPrice = s.theoOpenPrice, projectedVol = s.theoOpenVolume)
-                  dwMap += (x.uniqueId -> x)
-                  val ots =
-                    EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
-                  processAndSend(ots)
+                  // px or qt change, we recalculate. Hz doesnt update both at the same time.
+                  // If market buys and sells are updated and the update is the same then it can still recalculate with the same projected px and qty
+                  val dw = dwMap.getOrElse(dwInstrument.getUniqueId, DW(dwInstrument.getUniqueId))
+                  if (dw.projectedPrice != s.theoOpenPrice || dw.projectedVol != s.theoOpenVolume) {
+                    val newDw = dw.copy(projectedPrice = s.theoOpenPrice, projectedVol = s.theoOpenVolume)
+                    dwMap += (newDw.uniqueId -> newDw)
+                    val ots =
+                      EitherT(algo.map(_.handleOnSignal(preProcess)).getOrElse(Right(List.empty[OrderAction]).pure[Id]))
+                    processAndSend(ots)
+                  }
 
                 case (None, None) =>
                   val x = dwMap
