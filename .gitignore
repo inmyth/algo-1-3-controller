@@ -51,3 +51,5 @@ jitwatch.out
 .metals
 .bloop
 project/**/metals.sbt
+
+*.backup

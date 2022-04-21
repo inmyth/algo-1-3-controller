@@ -114,7 +114,7 @@ trait Agent extends NativeTradingAgent {
             (o, _) => {
               o.setPrice(order.getPrice)
               o.setQuantity(order.getQuantityL)
-              o.setCustomField(ReferenceMarketDataField.PORTFOLIO, hedgePortfolio)
+              //o.setCustomField(ReferenceMarketDataField.PORTFOLIO, hedgePortfolio)
               o
             }
           )
@@ -174,7 +174,8 @@ trait Agent extends NativeTradingAgent {
       direction <- EitherT.fromEither(
         if (totalResidual < 0) {
           Right(Direction.SELL)
-        } else {
+        }
+        else {
           Right(Direction.BUY)
         }
       )
